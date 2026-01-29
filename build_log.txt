@@ -1,0 +1,50 @@
+
+> emergency-department-game@1.0.0 build
+> tsc && vite build
+
+src/components/admin/AdminDashboard.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/analytics/GameResults.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/analytics/GameResults.tsx(4,43): error TS6133: 'BarChart' is declared but its value is never read.
+src/components/analytics/GameResults.tsx(4,53): error TS6133: 'Bar' is declared but its value is never read.
+src/components/game/GameBoard.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/game/GameBoard.tsx(5,1): error TS6133: 'PatientChip' is declared but its value is never read.
+src/components/game/GameBoard.tsx(9,20): error TS6133: 'PatientType' is declared but its value is never read.
+src/components/game/GameBoard.tsx(10,24): error TS6133: 'PATIENT_ROOM_OPTIONS' is declared but its value is never read.
+src/components/game/GameBoard.tsx(20,5): error TS6133: 'moveRoom' is declared but its value is never read.
+src/components/game/GameBoard.tsx(180,9): error TS6133: 'handleAddRoom' is declared but its value is never read.
+src/components/game/GameBoard.tsx(323,57): error TS18047: 'gameState' is possibly 'null'.
+src/components/game/PatientChip.tsx(1,1): error TS6133: 'React' is declared but its value is never read.
+src/components/game/PatientChip.tsx(3,19): error TS6133: 'PatientType' is declared but its value is never read.
+src/components/game/RoomCard.tsx(1,1): error TS6133: 'React' is declared but its value is never read.
+src/components/game/RoomCard.tsx(3,26): error TS6133: 'Patient' is declared but its value is never read.
+src/components/game/WaitingQueue.tsx(1,1): error TS6133: 'React' is declared but its value is never read.
+src/components/game/WaitingQueue.tsx(3,19): error TS6133: 'PatientType' is declared but its value is never read.
+src/components/game/WaitingQueue.tsx(35,35): error TS6133: 'index' is declared but its value is never read.
+src/components/game/WaitingQueue.tsx(126,34): error TS6133: 'patient' is declared but its value is never read.
+src/components/instructor/InstructorDashboard.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/instructor/SessionMonitor.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/instructor/SessionMonitor.tsx(13,3): error TS6133: 'updatePlayerGameState' is declared but its value is never read.
+src/components/instructor/SessionSetup.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/instructor/SessionSetup.tsx(26,9): error TS6133: 'instructor' is declared but its value is never read.
+src/components/instructor/SessionSetup.tsx(92,13): error TS2698: Spread types may only be created from object types.
+src/components/player/JoinSession.tsx(12,11): error TS6133: 'setSession' is declared but its value is never read.
+src/components/player/PlayerGame.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/config/firebase.ts(7,23): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/config/firebase.ts(8,27): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/config/firebase.ts(9,26): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/config/firebase.ts(10,30): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/config/firebase.ts(11,34): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/config/firebase.ts(12,22): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/contexts/AuthContext.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/contexts/AuthContext.tsx(45,44): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/contexts/AuthContext.tsx(49,17): error TS2345: Argument of type 'string | null' is not assignable to parameter of type 'string'.
+  Type 'null' is not assignable to type 'string'.
+src/contexts/GameContext.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/contexts/GameContext.tsx(3,53): error TS6133: 'Room' is declared but its value is never read.
+src/data/gameConstants.ts(1,26): error TS6133: 'HourlyArrivals' is declared but its value is never read.
+src/services/emailService.ts(5,37): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/services/emailService.ts(6,33): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/services/emailService.ts(7,32): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/services/firebaseService.ts(11,3): error TS6133: 'orderBy' is declared but its value is never read.
+src/services/firebaseService.ts(491,34): error TS2339: Property 'env' does not exist on type 'ImportMeta'.
+src/utils/gameUtils.ts(12,50): error TS6133: 'PATIENT_ROOM_OPTIONS' is declared but its value is never read.

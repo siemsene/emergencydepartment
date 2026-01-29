@@ -1,0 +1,116 @@
+.patient-chip {
+  border-radius: 50%;
+  border-width: 4px;
+  border-style: solid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  position: relative;
+  background: white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: box-shadow 0.2s ease;
+}
+
+.patient-chip:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.patient-chip-movable {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25), 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.patient-chip.dragging {
+  cursor: grabbing;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.patient-chip-small {
+  width: 36px;
+  height: 36px;
+  border-width: 3px;
+}
+
+.patient-chip-medium {
+  width: 48px;
+  height: 48px;
+}
+
+.patient-chip-large {
+  width: 60px;
+  height: 60px;
+  border-width: 5px;
+}
+
+.patient-chip-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.patient-type {
+  font-weight: 800;
+  font-size: 1.25rem;
+}
+
+.patient-chip-small .patient-type {
+  font-size: 0.875rem;
+}
+
+.patient-chip-large .patient-type {
+  font-size: 1.5rem;
+}
+
+.waiting-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: #1e293b;
+  color: white;
+  font-size: 0.625rem;
+  padding: 2px 4px;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
+/* Dice indicator */
+.dice-indicator {
+  position: absolute;
+  bottom: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 40px;
+  height: 40px;
+}
+
+.d20-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.dice-number {
+  transition: none;
+}
+
+.dice-number.rolling {
+  animation: pulse 0.1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.dice-indicator.rolling .d20-svg {
+  animation: shake 0.1s infinite;
+}
+
+@keyframes shake {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(5deg); }
+  75% { transform: rotate(-5deg); }
+}

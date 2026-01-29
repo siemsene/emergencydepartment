@@ -1,0 +1,121 @@
+.instructor-auth-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+  padding: 1rem;
+}
+
+.auth-card {
+  background: white;
+  border-radius: 24px;
+  padding: 3rem;
+  width: 100%;
+  max-width: 440px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.logo-section {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.game-title {
+  font-size: 2.5rem;
+  font-weight: 900;
+  color: #dc2626;
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.game-subtitle {
+  font-size: 1rem;
+  color: #64748b;
+  margin: 0.5rem 0 0;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.auth-form h2 {
+  margin: 0 0 0.5rem;
+  text-align: center;
+  color: #1e293b;
+}
+
+.error-message {
+  background: #fef2f2;
+  color: #dc2626;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.success-message {
+  background: #f0fdf4;
+  color: #16a34a;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.auth-links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.auth-links button {
+  background: none;
+  border: none;
+  color: #3b82f6;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.auth-links button:hover {
+  text-decoration: underline;
+}
+
+.approval-note {
+  font-size: 0.75rem;
+  color: #64748b;
+  text-align: center;
+  margin: 0;
+  padding: 0.75rem;
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+.forgot-text {
+  color: #64748b;
+  font-size: 0.875rem;
+  text-align: center;
+  margin: 0;
+}
+
+.player-link {
+  margin-top: 2rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.player-link a {
+  color: #3b82f6;
+  text-decoration: none;
+  font-weight: 500;
+  margin-left: 0.25rem;
+}
+
+.player-link a:hover {
+  text-decoration: underline;
+}

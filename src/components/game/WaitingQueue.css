@@ -1,0 +1,148 @@
+.waiting-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.queue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.queue-title {
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.queue-count {
+  font-size: 0.875rem;
+  color: #64748b;
+  background: #f1f5f9;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+.queue-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.queue-slot {
+  width: 100%;
+  min-height: 56px;
+  border: 2px dashed #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  padding: 0.5rem;
+}
+
+.queue-slot.filled {
+  border-style: solid;
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.queue-slot.selected {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.queue-slot.empty {
+  background: #fafafa;
+}
+
+.slot-number {
+  color: #cbd5e1;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.event-indicator {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.event-indicator.cardiac {
+  background: #dc2626;
+  color: white;
+  animation: shake 0.5s ease-in-out;
+}
+
+.event-indicator.lwbs {
+  background: #f59e0b;
+  color: white;
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+.queue-full-warning {
+  background: #fef2f2;
+  color: #dc2626;
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  text-align: center;
+  font-weight: 500;
+}
+
+/* Patient Arrival Animation */
+.patient-arrival {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: white;
+  padding: 2rem;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+  z-index: 100;
+}
+
+.arrival-header {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1e293b;
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+.arrival-patients {
+  display: flex;
+  gap: 1rem;
+  justify-content: center;
+}
+
+/* Patient Treated Bubble */
+.patient-treated-bubble {
+  position: absolute;
+  top: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #22c55e;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  z-index: 10;
+}

@@ -1,0 +1,231 @@
+.room-card {
+  background: white;
+  border-radius: 12px;
+  border: 3px solid;
+  overflow: hidden;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.2s ease;
+}
+
+.room-card.greyed-out {
+  opacity: 0.5;
+  filter: grayscale(0.5);
+}
+
+.room-card.highlighted {
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.3), 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.room-header {
+  padding: 0.5rem 0.75rem;
+  color: white;
+  font-weight: 600;
+  font-size: 0.875rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.room-name {
+  width: 100%;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-cost {
+  font-size: 0.75rem;
+  opacity: 0.9;
+}
+
+.room-body {
+  padding: 0.75rem;
+}
+
+.room-label {
+  font-size: 0.625rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.5rem;
+}
+
+.room-slots {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+}
+
+.room-slot {
+  width: 40px;
+  height: 40px;
+  border: 2px solid #e2e8f0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.room-slot:hover:not(.occupied) {
+  border-color: #94a3b8;
+  background: #f8fafc;
+}
+
+.room-slot.slot-highlighted {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+  animation: pulse-highlight 1s infinite;
+}
+
+@keyframes pulse-highlight {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+  50% { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
+}
+
+.slot-number {
+  font-weight: 700;
+  color: #94a3b8;
+  font-size: 0.875rem;
+}
+
+.slot-patient {
+  position: absolute;
+  inset: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.room-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.emergency-label {
+  font-weight: 800;
+  font-size: 0.625rem;
+  letter-spacing: 0.05em;
+}
+
+.room-capability-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.capability-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid rgba(15, 23, 42, 0.15);
+}
+
+/* Inventory Card */
+.room-inventory-card {
+  background: white;
+  border-radius: 8px;
+  border: 2px solid;
+  overflow: hidden;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  position: relative;
+}
+
+.inventory-header {
+  padding: 0.375rem 0.5rem;
+  color: white;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.inventory-header span {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.inventory-body {
+  padding: 0.5rem;
+  text-align: center;
+}
+
+.inventory-slots {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  margin-bottom: 0.5rem;
+}
+
+.inventory-slot {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #e2e8f0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.625rem;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.inventory-cost {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.inventory-count {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: #1e293b;
+  color: white;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+/* Empty Room Slot */
+.empty-room-slot {
+  background: #f8fafc;
+  border: 2px dashed #cbd5e1;
+  border-radius: 12px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.empty-room-slot:hover {
+  border-color: #94a3b8;
+  background: #f1f5f9;
+}
+
+.empty-room-slot.highlighted {
+  border-color: #3b82f6;
+  border-style: solid;
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.slot-label {
+  color: #94a3b8;
+  font-size: 0.875rem;
+}

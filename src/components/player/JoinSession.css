@@ -1,0 +1,70 @@
+.join-session-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+  padding: 1rem;
+}
+
+.join-card {
+  background: white;
+  border-radius: 24px;
+  padding: 3rem;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.logo-section {
+  text-align: center;
+  margin-bottom: 2.5rem;
+}
+
+.game-title {
+  font-size: 3rem;
+  font-weight: 900;
+  color: #dc2626;
+  margin: 0;
+  letter-spacing: -0.02em;
+  text-shadow: 2px 2px 0 #fca5a5;
+}
+
+.game-subtitle {
+  font-size: 1rem;
+  color: #64748b;
+  margin: 0.5rem 0 0;
+}
+
+.join-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.error-message {
+  background: #fef2f2;
+  color: #dc2626;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+.instructor-link {
+  margin-top: 2rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: #64748b;
+}
+
+.instructor-link a {
+  color: #3b82f6;
+  text-decoration: none;
+  font-weight: 500;
+  margin-left: 0.25rem;
+}
+
+.instructor-link a:hover {
+  text-decoration: underline;
+}

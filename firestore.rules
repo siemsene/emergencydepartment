@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == "siemsene@gmail.com";
+    }
+
+    match /instructors/{userId} {
+      allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      allow update, delete: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+    }
+
+    // Players are unauthenticated in this app, so reads/writes are open.
+    match /sessions/{sessionId} {
+      allow read, write: if true;
+    }
+
+    match /players/{playerId} {
+      allow read, write: if true;
+    }
+  }
+}

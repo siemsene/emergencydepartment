@@ -1,0 +1,133 @@
+.player-game {
+  min-height: 100vh;
+  background: #f0f9ff;
+}
+
+.player-header {
+  background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.player-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.player-name {
+  font-weight: 700;
+  font-size: 1.125rem;
+}
+
+.session-code {
+  font-size: 0.875rem;
+  opacity: 0.8;
+}
+
+/* Loading State */
+.player-game-loading {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: #f0f9ff;
+}
+
+.loading-spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid #e2e8f0;
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+}
+
+/* Error State */
+.player-game-error {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: #f0f9ff;
+  text-align: center;
+}
+
+.player-game-error h2 {
+  color: #dc2626;
+  margin: 0;
+}
+
+.player-game-error button {
+  padding: 0.75rem 1.5rem;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* Waiting Screen */
+.waiting-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #1e3a5f 0%, #0f172a 100%);
+  padding: 1rem;
+}
+
+.waiting-card {
+  background: white;
+  border-radius: 24px;
+  padding: 3rem;
+  text-align: center;
+  max-width: 480px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.waiting-card .game-title {
+  font-size: 2.5rem;
+  font-weight: 900;
+  color: #dc2626;
+  margin: 0 0 1rem;
+}
+
+.waiting-card h2 {
+  margin: 0 0 0.5rem;
+  color: #1e293b;
+}
+
+.waiting-card p {
+  color: #64748b;
+  margin: 0 0 1.5rem;
+}
+
+.session-info {
+  background: #f1f5f9;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+}
+
+.session-info strong {
+  font-family: monospace;
+  font-size: 1.25rem;
+  letter-spacing: 0.1em;
+}
+
+.loading-dots {
+  font-size: 2rem;
+  color: #64748b;
+}
+
+.loading-dots span {
+  margin: 0 2px;
+}

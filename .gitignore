@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Local datasets
+src/data/pregeneratedArrivals.ts
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary
+temp_docx/
+*.zip
+
+# Firebase
+.firebase/
+firebase-debug.log
+
+# Misc
+*.docx
+*.pdf

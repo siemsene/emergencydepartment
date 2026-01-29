@@ -1,0 +1,176 @@
+.admin-dashboard {
+  min-height: 100vh;
+  background: #f1f5f9;
+}
+
+.admin-header {
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+  color: white;
+  padding: 1rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-left {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+}
+
+.admin-title {
+  font-size: 1.75rem;
+  font-weight: 900;
+  margin: 0;
+}
+
+.admin-subtitle {
+  font-size: 1rem;
+  opacity: 0.9;
+}
+
+.header-right {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.admin-main {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.admin-section {
+  margin-bottom: 2rem;
+}
+
+.admin-section h2 {
+  margin: 0 0 1rem;
+  font-size: 1.25rem;
+  color: #1e293b;
+}
+
+.loading-state, .empty-state {
+  background: white;
+  padding: 2rem;
+  border-radius: 12px;
+  text-align: center;
+  color: #64748b;
+}
+
+/* Instructor Grid (for pending) */
+.instructor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.instructor-card {
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.instructor-card.pending {
+  border-left: 4px solid #f59e0b;
+}
+
+.card-header {
+  padding: 1rem;
+  background: #f8fafc;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.card-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.status-badge {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.status-badge.pending {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.card-body {
+  padding: 1rem;
+}
+
+.card-body p {
+  margin: 0 0 0.5rem;
+  font-size: 0.875rem;
+}
+
+.card-body .email {
+  color: #1e293b;
+}
+
+.card-body .organization {
+  color: #64748b;
+}
+
+.card-body .date {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.card-actions {
+  padding: 1rem;
+  background: #f8fafc;
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Instructor Table (for approved) */
+.instructor-table {
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.instructor-table .table-header,
+.instructor-table .table-row {
+  display: grid;
+  grid-template-columns: 1.5fr 2fr 1.5fr 0.75fr 1fr 1fr;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  align-items: center;
+  font-size: 0.875rem;
+}
+
+.instructor-table .table-header {
+  background: #f8fafc;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.instructor-table .table-row {
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.instructor-table .table-row:last-child {
+  border-bottom: none;
+}
+
+.instructor-table .name {
+  font-weight: 600;
+}
+
+.instructor-table .email {
+  color: #3b82f6;
+}
+
+.instructor-table .actions {
+  display: flex;
+  gap: 0.5rem;
+}
