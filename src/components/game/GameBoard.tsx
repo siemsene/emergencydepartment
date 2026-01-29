@@ -25,6 +25,7 @@ export function GameBoard() {
     completeSequencing,
     processArrivals,
     processRiskEvents,
+    applyRiskEventResults,
     processTreatment,
     completeTurn
   } = useGame();
@@ -41,14 +42,18 @@ export function GameBoard() {
   const rollAnimationRef = useRef<NodeJS.Timeout | null>(null);
   const treatmentTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const rollingFailsafeRef = useRef<NodeJS.Timeout | null>(null);
-  // Ref to hold the latest processTreatment function to avoid stale closures in timeouts
+  // Refs to hold the latest functions to avoid stale closures in timeouts
   const processTreatmentRef = useRef(processTreatment);
   processTreatmentRef.current = processTreatment;
+  const applyRiskEventResultsRef = useRef(applyRiskEventResults);
+  applyRiskEventResultsRef.current = applyRiskEventResults;
+  // Store dice results for applying after animation
+  const pendingRiskResultsRef = useRef<{ patientId: string; roll: number; isEvent: boolean; type: PatientType }[]>([]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (rollAnimationRef.current) clearInterval(rollAnimationRef.current);
+      if (rollAnimationRef.current) clearTimeout(rollAnimationRef.current);
       if (treatmentTimeoutRef.current) clearTimeout(treatmentTimeoutRef.current);
       if (rollingFailsafeRef.current) clearTimeout(rollingFailsafeRef.current);
     };
@@ -114,6 +119,14 @@ export function GameBoard() {
       }
     }, 8000);
   }, [isSequencingPhase, gameState?.currentPhase]);
+
+  // Clear dice results when starting a new hour
+  useEffect(() => {
+    if (gameState?.currentPhase === 'arriving' || gameState?.currentPhase === 'sequencing') {
+      setDiceResults(new Map());
+      setIsRolling(false);
+    }
+  }, [currentHour, gameState?.currentPhase]);
 
   // Process arrivals when hour changes - uses persisted lastArrivalsHour from gameState
   // The processArrivals function itself guards against duplicate processing
@@ -224,16 +237,21 @@ export function GameBoard() {
     setShowConfirmModal(false);
     await completeSequencing();
 
-    // Process risk events with dice rolling animation
+    // Roll dice for risk events (doesn't remove patients yet)
     setIsRolling(true);
-    let results: { patientId: string; roll: number; isEvent: boolean }[] = [];
+    let results: { patientId: string; roll: number; isEvent: boolean; type: PatientType }[] = [];
     try {
       results = await processRiskEvents();
+      // Store results for applying after animation
+      pendingRiskResultsRef.current = results;
+      console.log('[GameBoard] Stored risk results:', results);
+      console.log('[GameBoard] Type A risk events:', results.filter(r => r.type === 'A' && r.isEvent));
     } catch (error) {
-      console.error('Error processing risk events:', error);
+      console.error('Error rolling for risk events:', error);
       setIsRolling(false);
       try {
-        await processTreatment();
+        await applyRiskEventResultsRef.current([]);
+        await processTreatmentRef.current();
       } catch (treatmentError) {
         console.error('Error processing treatment after risk error:', treatmentError);
       }
@@ -246,26 +264,33 @@ export function GameBoard() {
       treatmentTimeoutRef.current = setTimeout(async () => {
         treatmentTimeoutRef.current = null;
         try {
-          // Use ref to get the latest processTreatment function (avoids stale closure)
+          // Apply risk results (none) and process treatment
+          await applyRiskEventResultsRef.current([]);
           await processTreatmentRef.current();
         } catch (error) {
-          console.error('Error processing treatment with no risk events:', error);
+          console.error('Error processing treatment with no patients:', error);
         }
       }, 500);
       return;
     }
 
-    // Animate dice rolls
+    // Animate dice rolls with slowing effect
     const rollDuration = 3000;
-    const rollInterval = 100;
     let elapsed = 0;
+    let currentInterval = 50; // Start fast
 
     // Clear any existing animation/timeout
-    if (rollAnimationRef.current) clearInterval(rollAnimationRef.current);
+    if (rollAnimationRef.current) clearTimeout(rollAnimationRef.current);
     if (treatmentTimeoutRef.current) clearTimeout(treatmentTimeoutRef.current);
 
-    rollAnimationRef.current = setInterval(() => {
-      elapsed += rollInterval;
+    const animateRoll = () => {
+      elapsed += currentInterval;
+
+      // Gradually slow down the rolling speed
+      // Start at 50ms, end at ~400ms intervals
+      const progress = elapsed / rollDuration;
+      currentInterval = 50 + Math.pow(progress, 2) * 350;
+
       const newResults = new Map<string, { roll: number; isEvent: boolean }>();
 
       results.forEach(result => {
@@ -279,22 +304,36 @@ export function GameBoard() {
       setDiceResults(newResults);
 
       if (elapsed >= rollDuration) {
-        if (rollAnimationRef.current) clearInterval(rollAnimationRef.current);
         rollAnimationRef.current = null;
         setIsRolling(false);
 
-        // After dice animation, process treatment
+        // After dice animation, wait for risk event display then apply results and process treatment
         treatmentTimeoutRef.current = setTimeout(async () => {
           treatmentTimeoutRef.current = null;
           try {
-            // Use ref to get the latest processTreatment function (avoids stale closure)
+            // Apply risk event results (removes patients, updates stats)
+            // Keep dice results visible during exit animation
+            console.log('[GameBoard] Calling applyRiskEventResults with:', pendingRiskResultsRef.current);
+            console.log('[GameBoard] Risk events to apply:', pendingRiskResultsRef.current.filter(r => r.isEvent));
+            await applyRiskEventResultsRef.current(pendingRiskResultsRef.current);
+
+            // Wait for exit animation to complete (1.5s for risk events) before clearing dice
+            setTimeout(() => {
+              setDiceResults(new Map());
+            }, 1800);
+
+            // Process treatment while animation plays
             await processTreatmentRef.current();
           } catch (error) {
-            console.error('Error processing treatment:', error);
+            console.error('Error processing risk events and treatment:', error);
           }
-        }, 2000);
+        }, 2500);
+      } else {
+        rollAnimationRef.current = setTimeout(animateRoll, currentInterval);
       }
-    }, rollInterval);
+    };
+
+    rollAnimationRef.current = setTimeout(animateRoll, currentInterval);
   }, [completeSequencing, processRiskEvents, processTreatment]);
 
   const handleSequencingComplete = useCallback(() => {
@@ -396,7 +435,7 @@ export function GameBoard() {
             maxSize={params.maxWaitingRoom}
             selectedPatientId={selectedPatient}
             onPatientClick={handlePatientSelect}
-            showDice={gameState.currentPhase === 'rolling'}
+            showDice={diceResults.size > 0 || isRolling}
             diceResults={diceResults}
             isRolling={isRolling}
           />

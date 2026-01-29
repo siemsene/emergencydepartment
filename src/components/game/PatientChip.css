@@ -80,37 +80,54 @@
 /* Dice indicator */
 .dice-indicator {
   position: absolute;
-  bottom: -30px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 40px;
-  height: 40px;
+  right: -48px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 42px;
+  height: 42px;
 }
 
 .d20-svg {
   width: 100%;
   height: 100%;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.4));
 }
 
 .dice-number {
   transition: none;
+  user-select: none;
 }
 
 .dice-number.rolling {
-  animation: pulse 0.1s infinite;
+  animation: pulse-dice 0.15s infinite;
 }
 
-@keyframes pulse {
+@keyframes pulse-dice {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  50% { opacity: 0.7; }
 }
 
 .dice-indicator.rolling .d20-svg {
-  animation: shake 0.1s infinite;
+  animation: shake-dice 0.08s infinite;
 }
 
-@keyframes shake {
-  0%, 100% { transform: rotate(0deg); }
-  25% { transform: rotate(5deg); }
-  75% { transform: rotate(-5deg); }
+@keyframes shake-dice {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(8deg) scale(1.05); }
+  75% { transform: rotate(-8deg) scale(1.05); }
+}
+
+/* Final roll highlight */
+.dice-indicator:not(.rolling) .d20-svg polygon {
+  transition: fill 0.3s ease;
+}
+
+.dice-indicator:not(.rolling) .d20-svg {
+  animation: dice-settle 0.3s ease-out;
+}
+
+@keyframes dice-settle {
+  0% { transform: scale(1.1); }
+  50% { transform: scale(0.95); }
+  100% { transform: scale(1); }
 }

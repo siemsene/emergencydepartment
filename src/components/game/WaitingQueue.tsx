@@ -36,13 +36,23 @@ export function WaitingQueue({
             const diceResult = diceResults?.get(patient.id);
             const isSelected = selectedPatientId === patient.id;
 
+            const hasRiskEvent = diceResult?.isEvent;
+
             return (
               <motion.div
                 key={patient.id}
-                className={`queue-slot filled ${isSelected ? 'selected' : ''}`}
+                className={`queue-slot filled ${isSelected ? 'selected' : ''} ${hasRiskEvent ? 'risk-event' : ''}`}
                 initial={{ scale: 0, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0, opacity: 0 }}
+                animate={{
+                  scale: 1,
+                  opacity: hasRiskEvent ? 0.6 : 1,
+                  filter: hasRiskEvent ? 'grayscale(50%)' : 'none'
+                }}
+                exit={{
+                  scale: 0.8,
+                  opacity: 0,
+                  transition: { duration: hasRiskEvent ? 1.5 : 0.3 }
+                }}
                 transition={{ type: 'spring', stiffness: 500, damping: 30 }}
                 layout
               >
@@ -57,10 +67,11 @@ export function WaitingQueue({
                 {diceResult?.isEvent && (
                   <motion.div
                     className={`event-indicator ${patient.type === 'A' ? 'cardiac' : 'lwbs'}`}
-                    initial={{ scale: 0 }}
-                    animate={{ scale: 1 }}
+                    initial={{ scale: 0, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 20 }}
                   >
-                    {patient.type === 'A' ? 'Cardiac Arrest!' : 'LWBS'}
+                    {patient.type === 'A' ? 'Cardiac Arrest!' : 'Patient Leaves without being Seen'}
                   </motion.div>
                 )}
               </motion.div>

@@ -58,35 +58,105 @@ interface D20FaceProps {
 }
 
 function D20Face({ value, isRolling }: D20FaceProps) {
+  // Determine if this is a risk event roll (for highlighting)
+  const isHighRoll = value && value >= 18;
+
+  // Colors based on whether it's a high (dangerous) roll
+  const mainColor = isHighRoll ? '#991b1b' : '#1e293b';
+  const lightColor = isHighRoll ? '#b91c1c' : '#334155';
+  const darkColor = isHighRoll ? '#7f1d1d' : '#0f172a';
+  const strokeColor = isHighRoll ? '#ef4444' : '#64748b';
+  const textColor = isHighRoll ? '#fecaca' : '#f8fafc';
+
   return (
     <svg viewBox="0 0 40 40" className="d20-svg">
-      {/* Icosahedron-style triangular face */}
+      {/* D20 icosahedron - viewed from a vertex showing triangular faces */}
+
+      {/* Outer hexagonal border hint */}
       <polygon
-        points="20,2 38,30 2,30"
-        fill="#1e293b"
-        stroke="#475569"
+        points="20,1 37,11 37,29 20,39 3,29 3,11"
+        fill="none"
+        stroke={strokeColor}
+        strokeWidth="0.5"
+        opacity="0.3"
+      />
+
+      {/* Top-left triangular face */}
+      <polygon
+        points="20,1 3,11 12,20"
+        fill={lightColor}
+        stroke={strokeColor}
+        strokeWidth="0.5"
+      />
+
+      {/* Top-right triangular face */}
+      <polygon
+        points="20,1 37,11 28,20"
+        fill={darkColor}
+        stroke={strokeColor}
+        strokeWidth="0.5"
+      />
+
+      {/* Center top face (main face with number) */}
+      <polygon
+        points="20,1 12,20 28,20"
+        fill={mainColor}
+        stroke={strokeColor}
         strokeWidth="1"
       />
+
+      {/* Left triangular face */}
       <polygon
-        points="20,2 38,30 20,38"
-        fill="#334155"
-        stroke="#475569"
-        strokeWidth="1"
+        points="3,11 3,29 12,20"
+        fill={darkColor}
+        stroke={strokeColor}
+        strokeWidth="0.5"
       />
+
+      {/* Right triangular face */}
       <polygon
-        points="20,2 2,30 20,38"
-        fill="#475569"
-        stroke="#64748b"
-        strokeWidth="1"
+        points="37,11 37,29 28,20"
+        fill={lightColor}
+        stroke={strokeColor}
+        strokeWidth="0.5"
       />
+
+      {/* Bottom-left triangular face */}
+      <polygon
+        points="3,29 20,39 12,20"
+        fill={lightColor}
+        stroke={strokeColor}
+        strokeWidth="0.5"
+      />
+
+      {/* Bottom-right triangular face */}
+      <polygon
+        points="37,29 20,39 28,20"
+        fill={darkColor}
+        stroke={strokeColor}
+        strokeWidth="0.5"
+      />
+
+      {/* Center bottom face */}
+      <polygon
+        points="12,20 28,20 20,39"
+        fill={mainColor}
+        stroke={strokeColor}
+        strokeWidth="0.5"
+        opacity="0.7"
+      />
+
+      {/* Number display on main face */}
       <text
         x="20"
-        y="24"
+        y="15"
         textAnchor="middle"
-        fill="white"
-        fontSize="12"
+        dominantBaseline="middle"
+        fill={textColor}
+        fontSize="11"
         fontWeight="bold"
         className={isRolling ? 'dice-number rolling' : 'dice-number'}
+        style={{ textShadow: '0 1px 2px rgba(0,0,0,0.5)' }}
       >
         {value || '?'}
       </text>

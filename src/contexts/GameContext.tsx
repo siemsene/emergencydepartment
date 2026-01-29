@@ -43,6 +43,7 @@ interface GameContextType {
   // Game progression
   processArrivals: (arrivals: HourlyArrivals) => void;
   processRiskEvents: () => Promise<{ patientId: string; roll: number; isEvent: boolean; type: PatientType }[]>;
+  applyRiskEventResults: (results: { patientId: string; roll: number; isEvent: boolean; type: PatientType }[]) => Promise<void>;
   processTreatment: () => void;
   completeTurn: () => void;
   resetGame: () => Promise<void>;
@@ -462,6 +463,11 @@ export function GameProvider({ children }: { children: ReactNode }) {
     // Only allow completing sequencing if we're actually in the sequencing phase
     if (gameState.currentPhase !== 'sequencing') return;
 
+    // CRITICAL: Lock Firebase subscription updates BEFORE changing state
+    // This prevents race conditions during the rolling/animation phase
+    // Lock for 10 seconds to cover the entire sequence
+    localUpdateLockUntilRef.current = Date.now() + 10000;
+
     const newState = {
       ...gameState,
       currentPhase: 'rolling' as const,
@@ -470,44 +476,103 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
     setGameState(newState);
     await updatePlayerGameState(player.id, newState);
-  }, [gameState, player?.id]);
+  }, [gameState, player?.id, session?.currentHour]);
 
-  const processRiskEvents = useCallback(async () => {
+  // Phase 1: Roll dice for risk events (doesn't remove patients yet)
+  const rollForRiskEvents = useCallback(() => {
     if (!gameState || !session) return [];
+
+    // CRITICAL: Lock Firebase subscription updates during the entire rolling/animation phase
+    // This prevents stale Firebase data from overwriting our local state
+    // Lock for 8 seconds to cover: 3s animation + 2.5s delay + 2s buffer
+    localUpdateLockUntilRef.current = Date.now() + 8000;
 
     const params = session.parameters || DEFAULT_PARAMETERS;
     const results: { patientId: string; roll: number; isEvent: boolean; type: PatientType }[] = [];
+
+    console.log('[RiskEvents] Rolling for', gameState.waitingRoom.length, 'patients');
+    console.log('[RiskEvents] Risk event rolls config:', params.riskEventRolls);
+
+    // Roll for each waiting patient
+    for (const patient of gameState.waitingRoom) {
+      const roll = rollD20();
+      const riskRolls = params.riskEventRolls[patient.type];
+      const isEvent = riskRolls ? riskRolls.includes(roll) : false;
+
+      console.log(`[RiskEvents] Patient ${patient.type}: rolled ${roll}, riskRolls=${JSON.stringify(riskRolls)}, isEvent=${isEvent}`);
+
+      results.push({ patientId: patient.id, roll, isEvent, type: patient.type });
+    }
+
+    const riskEventCount = results.filter(r => r.isEvent).length;
+    console.log('[RiskEvents] Total risk events:', riskEventCount);
+
+    return results;
+  }, [gameState, session]);
+
+  // Phase 2: Apply risk event results (removes patients, updates stats)
+  const applyRiskEventResults = useCallback(async (
+    results: { patientId: string; roll: number; isEvent: boolean; type: PatientType }[]
+  ) => {
+    if (!gameState || !session) {
+      console.warn('[ApplyRisk] No gameState or session!');
+      return;
+    }
+
+    console.log('[ApplyRisk] Applying results for', results.length, 'patients');
+    console.log('[ApplyRisk] Results with isEvent=true:', results.filter(r => r.isEvent));
+    console.log('[ApplyRisk] Current waiting room size:', gameState.waitingRoom.length);
+    console.log('[ApplyRisk] Waiting room patient IDs:', gameState.waitingRoom.map(p => ({ id: p.id, type: p.type })));
+
+    const params = session.parameters || DEFAULT_PARAMETERS;
     const newRiskEvents: { patientId: string; type: PatientType; outcome: 'cardiac_arrest' | 'lwbs' }[] = [];
     let newWaitingRoom = [...gameState.waitingRoom];
     let newStats = { ...gameState.stats };
     let additionalCosts = 0;
 
-    // Roll for each waiting patient
-    for (const patient of gameState.waitingRoom) {
-      const roll = rollD20();
-      const isEvent = isRiskEvent(patient.type, roll, params);
-      results.push({ patientId: patient.id, roll, isEvent, type: patient.type });
+    // Process risk events based on results
+    for (const result of results) {
+      if (result.isEvent) {
+        console.log('[ApplyRisk] Processing risk event for patient:', result.patientId, 'type:', result.type, 'roll:', result.roll);
 
-      if (isEvent) {
-        if (patient.type === 'A') {
+        const patient = newWaitingRoom.find(p => p.id === result.patientId);
+        if (!patient) {
+          console.warn('[ApplyRisk] Patient NOT FOUND in waiting room:', result.patientId, result.type);
+          console.warn('[ApplyRisk] Available patient IDs:', newWaitingRoom.map(p => p.id));
+          continue;
+        }
+
+        console.log('[ApplyRisk] Found patient:', patient.id, 'type:', patient.type);
+
+        // Use patient.type for consistency (should match result.type)
+        const patientType = patient.type;
+
+        if (patientType === 'A') {
           // Cardiac arrest
+          console.log('[ApplyRisk] Processing Type A cardiac arrest');
           newStats.cardiacArrests++;
           additionalCosts += params.riskEventCost.A;
-          newWaitingRoom = newWaitingRoom.filter(p => p.id !== patient.id);
+          newRiskEvents.push({ patientId: result.patientId, type: patientType, outcome: 'cardiac_arrest' });
         } else {
-          // LWBS
-          if (patient.type === 'B') {
+          // LWBS (Left Without Being Seen)
+          console.log('[ApplyRisk] Processing Type', patientType, 'LWBS');
+          if (patientType === 'B') {
             newStats.lwbs.B++;
             additionalCosts += params.riskEventCost.B;
           } else {
             newStats.lwbs.C++;
             additionalCosts += params.riskEventCost.C;
           }
-          newWaitingRoom = newWaitingRoom.filter(p => p.id !== patient.id);
+          newRiskEvents.push({ patientId: result.patientId, type: patientType, outcome: 'lwbs' });
         }
-        newStats.riskEventCosts += params.riskEventCost[patient.type];
+        newStats.riskEventCosts += params.riskEventCost[patientType];
+        newWaitingRoom = newWaitingRoom.filter(p => p.id !== result.patientId);
+        console.log('[ApplyRisk] Removed patient, new waiting room size:', newWaitingRoom.length);
       }
     }
+
+    console.log('[ApplyRisk] Final newRiskEvents:', newRiskEvents);
+    console.log('[ApplyRisk] Final newWaitingRoom size:', newWaitingRoom.length);
 
     // Increment waiting time for remaining patients
     newWaitingRoom = newWaitingRoom.map(p => ({
@@ -541,13 +606,19 @@ export function GameProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    console.log('[ApplyRisk] Setting new state with turnEvents.riskEvents:', newState.turnEvents.riskEvents);
+    console.log('[ApplyRisk] New state cardiacArrests:', newState.stats.cardiacArrests);
+
     setGameState(newState);
     if (player?.id) {
       await updatePlayerGameState(player.id, newState);
     }
-
-    return results;
   }, [gameState, session, player?.id]);
+
+  // Legacy function for compatibility - just rolls, doesn't apply
+  const processRiskEvents = useCallback(async () => {
+    return rollForRiskEvents();
+  }, [rollForRiskEvents]);
 
   const processTreatment = useCallback(async () => {
     if (!gameState || !session) return;
@@ -680,6 +751,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         completeSequencing,
         processArrivals,
         processRiskEvents,
+        applyRiskEventResults,
         processTreatment,
         completeTurn,
         resetGame,
