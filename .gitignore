@@ -38,3 +38,7 @@ firebase-debug.log
 # Misc
 *.docx
 *.pdf
+
+# Local pregenerated arrivals example
+src/data/pregeneratedArrivals.example.ts
+
