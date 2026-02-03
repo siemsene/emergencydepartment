@@ -10,6 +10,8 @@ import { Modal } from '../shared/Modal';
 import { Room, RoomType, PatientType } from '../../types';
 import { HOURS_OF_DAY, PATIENT_ROOM_OPTIONS, DEFAULT_PARAMETERS } from '../../data/gameConstants';
 import { formatCurrency, canTreatInRoom, getTreatmentTime } from '../../utils/gameUtils';
+import { AnimatedCurrency } from '../shared/AnimatedCurrency';
+import { RevealEvent } from './TurnSummary';
 import './GameBoard.css';
 
 export function GameBoard() {
@@ -33,10 +35,13 @@ export function GameBoard() {
   const [selectedRoom, setSelectedRoom] = useState<RoomType | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<string | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [isSummaryComplete, setIsSummaryComplete] = useState(false);
   const [diceResults, setDiceResults] = useState<Map<string, { roll: number; isEvent: boolean }>>(new Map());
   const [isRolling, setIsRolling] = useState(false);
   const [phaseBanner, setPhaseBanner] = useState('');
   const [showNudge, setShowNudge] = useState(false);
+  const [displayedRevenue, setDisplayedRevenue] = useState(0);
+  const [displayedCost, setDisplayedCost] = useState(0);
 
   // Refs for cleanup and stable function references
   const rollAnimationRef = useRef<NodeJS.Timeout | null>(null);
@@ -250,8 +255,8 @@ export function GameBoard() {
       console.error('Error rolling for risk events:', error);
       setIsRolling(false);
       try {
-        await applyRiskEventResultsRef.current([]);
-        await processTreatmentRef.current();
+        const riskEvents = await applyRiskEventResultsRef.current([]);
+        await processTreatmentRef.current(riskEvents);
       } catch (treatmentError) {
         console.error('Error processing treatment after risk error:', treatmentError);
       }
@@ -265,8 +270,8 @@ export function GameBoard() {
         treatmentTimeoutRef.current = null;
         try {
           // Apply risk results (none) and process treatment
-          await applyRiskEventResultsRef.current([]);
-          await processTreatmentRef.current();
+          const riskEvents = await applyRiskEventResultsRef.current([]);
+          await processTreatmentRef.current(riskEvents);
         } catch (error) {
           console.error('Error processing treatment with no patients:', error);
         }
@@ -315,15 +320,15 @@ export function GameBoard() {
             // Keep dice results visible during exit animation
             console.log('[GameBoard] Calling applyRiskEventResults with:', pendingRiskResultsRef.current);
             console.log('[GameBoard] Risk events to apply:', pendingRiskResultsRef.current.filter(r => r.isEvent));
-            await applyRiskEventResultsRef.current(pendingRiskResultsRef.current);
+            const appliedRiskEvents = await applyRiskEventResultsRef.current(pendingRiskResultsRef.current);
 
             // Wait for exit animation to complete (1.5s for risk events) before clearing dice
             setTimeout(() => {
               setDiceResults(new Map());
             }, 1800);
 
-            // Process treatment while animation plays
-            await processTreatmentRef.current();
+            // Process treatment while animation plays - pass risk events to avoid stale closure
+            await processTreatmentRef.current(appliedRiskEvents);
           } catch (error) {
             console.error('Error processing risk events and treatment:', error);
           }
@@ -354,10 +359,109 @@ export function GameBoard() {
   }, [gameState, handleConfirmSequencing]);
 
 
-  const totalCost = gameState?.totalCost || 0;
-  const totalRevenue = gameState?.totalRevenue || 0;
   const staffingCost = gameState?.staffingCost || 0;
-  const profit = totalRevenue - totalCost;
+  const currencySymbol = params.currencySymbol || '$';
+
+  // Revenue/Cost Counter Sync Logic
+  // Track if we've already set baseline for this turn to avoid resetting mid-reveal
+  const baselineSetForHourRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!gameState) return;
+
+    const { turnEvents } = gameState;
+    const currentHour = gameState.lastArrivalsHour ?? 0;
+
+    // Reset summary complete state when phase changes or hour changes
+    if (gameState.currentPhase !== 'review') {
+      setIsSummaryComplete(false);
+    }
+
+    // During 'review' phase, set baseline (before turn events) so TurnSummary reveal can animate
+    // Only set baseline in 'review' phase because that's when ALL turnEvents are populated
+    // (riskEvents are added in 'treating', completed are added in 'review')
+    if (gameState.currentPhase === 'review') {
+      // Only set baseline once per turn to avoid resetting during reveal
+      if (baselineSetForHourRef.current !== currentHour) {
+        baselineSetForHourRef.current = currentHour;
+        setIsSummaryComplete(false); // Reset for the new turn review stage
+
+        if (!turnEvents) return;
+
+        // Calculate what the values WERE before this turn's events
+        const completedRevenue = turnEvents.completed.reduce((sum, e) => sum + params.revenuePerPatient[e.type], 0);
+        const riskCosts = turnEvents.riskEvents.reduce((sum, e) => sum + params.riskEventCost[e.type], 0);
+        const waitingCosts = turnEvents.waitingCosts || 0;
+
+        setDisplayedRevenue(gameState.totalRevenue - completedRevenue);
+        setDisplayedCost(gameState.totalCost - riskCosts - waitingCosts);
+      }
+      return;
+    }
+
+    // During 'treating' phase, don't sync - wait for 'review' to set proper baseline
+    if (gameState.currentPhase === 'treating') {
+      return;
+    }
+
+    // For other phases, sync immediately to current state
+    baselineSetForHourRef.current = null; // Reset so next turn can set baseline
+    setDisplayedRevenue(gameState.totalRevenue);
+    setDisplayedCost(gameState.totalCost);
+  }, [gameState?.currentPhase, gameState?.lastArrivalsHour, gameState?.totalRevenue, gameState?.totalCost, gameState?.turnEvents, params]);
+
+  const handleItemRevealed = useCallback((event: RevealEvent) => {
+    if (event.category === 'completed') {
+      setDisplayedRevenue(prev => prev + params.revenuePerPatient[event.type]);
+    } else if (event.category === 'risk') {
+      setDisplayedCost(prev => prev + params.riskEventCost[event.type]);
+    }
+  }, [params]);
+
+  const handleSummaryComplete = useCallback(() => {
+    setIsSummaryComplete(true);
+  }, []);
+
+  // If there are no risk events or completed patients, auto-complete the summary
+  // after the arrivals reveal duration so the turn doesn't get stuck in review.
+  useEffect(() => {
+    if (!gameState) return;
+    if (gameState.currentPhase !== 'review') return;
+    if (isSummaryComplete) return;
+
+    const riskCount = gameState.turnEvents?.riskEvents?.length ?? 0;
+    const completedCount = gameState.turnEvents?.completed?.length ?? 0;
+    if (riskCount > 0 || completedCount > 0) return;
+
+    const arrived = gameState.turnEvents?.arrived;
+    const turnedAway = gameState.turnEvents?.turnedAway;
+    const arrivalCount =
+      (arrived?.A ?? 0) + (arrived?.B ?? 0) + (arrived?.C ?? 0) +
+      (turnedAway?.A ?? 0) + (turnedAway?.B ?? 0) + (turnedAway?.C ?? 0);
+
+    // Arrivals reveal at 100ms each, then a 500ms pause before results.
+    const delay = arrivalCount * 100 + 600;
+    const timer = setTimeout(() => {
+      setIsSummaryComplete(true);
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [gameState?.currentPhase, gameState?.turnEvents, isSummaryComplete]);
+
+  // Failsafe: if review hangs for any reason, allow finishing after a short delay.
+  useEffect(() => {
+    if (!gameState) return;
+    if (gameState.currentPhase !== 'review') return;
+    if (isSummaryComplete) return;
+
+    const timer = setTimeout(() => {
+      setIsSummaryComplete(true);
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [gameState?.currentPhase, gameState?.lastArrivalsHour, isSummaryComplete]);
+
+  const profit = displayedRevenue - displayedCost;
 
   // Get highlighted slots for selected patient
   // Only highlight rooms during sequencing phase when player can actually assign patients
@@ -396,31 +500,31 @@ export function GameBoard() {
         )}
       </AnimatePresence>
 
-      {/* Phase Banner */}
-      {isSequencingPhase && (
-        <div className="phase-banner">
+      {/* Game Header (Persistent) */}
+      <div className="game-header">
+        <div className="header-info">
           <div className="hour-display">
             Hour {currentHour}: {HOURS_OF_DAY[currentHour - 1] || ''}
           </div>
           <div className="phase-display">{phaseBanner}</div>
         </div>
-      )}
 
-      {/* Stats Bar */}
-      <div className="stats-bar">
-        <div className="stat-item revenue">
-          <span className="stat-label">Revenue</span>
-          <span className="stat-value">{formatCurrency(totalRevenue)}</span>
-        </div>
-        <div className="stat-item cost">
-          <span className="stat-label">Cost</span>
-          <span className="stat-value">{formatCurrency(totalCost)}</span>
-        </div>
-        <div className={`stat-item profit ${profit >= 0 ? 'positive' : 'negative'}`}>
-          <span className="stat-label">Profit</span>
-          <span className="stat-value">{formatCurrency(profit)}</span>
+        <div className="header-stats">
+          <div className="header-stat revenue">
+            <span className="stat-label">Revenue</span>
+            <AnimatedCurrency value={displayedRevenue} currencySymbol={currencySymbol} className="stat-value" />
+          </div>
+          <div className="header-stat cost">
+            <span className="stat-label">Cost</span>
+            <AnimatedCurrency value={displayedCost} currencySymbol={currencySymbol} className="stat-value" />
+          </div>
+          <div className={`header-stat profit ${profit >= 0 ? 'positive' : 'negative'}`}>
+            <span className="stat-label">Profit</span>
+            <AnimatedCurrency value={profit} currencySymbol={currencySymbol} className="stat-value" />
+          </div>
         </div>
       </div>
+
 
       {/* Main Board Area */}
       <div className="board-layout">
@@ -438,6 +542,8 @@ export function GameBoard() {
             showDice={diceResults.size > 0 || isRolling}
             diceResults={diceResults}
             isRolling={isRolling}
+            riskEventRolls={params.riskEventRolls}
+            timeSensitiveWaitingHarms={params.timeSensitiveWaitingHarms}
           />
 
           <div className="exit-door">
@@ -466,6 +572,7 @@ export function GameBoard() {
                     isPatientMovable={!!canMovePatient}
                     onPatientDrop={() => handleRoomClick(room.id)}
                     onPatientRemove={canMovePatient ? movePatientBackToQueue : undefined}
+                    currencySymbol={currencySymbol}
                   />
                   {isStaffingPhase && (
                     <button
@@ -500,18 +607,21 @@ export function GameBoard() {
                 cost={params.roomCosts.high}
                 onClick={() => setSelectedRoom('high')}
                 disabled={staffingCost + params.roomCosts.high > params.maxStaffingBudget}
+                currencySymbol={currencySymbol}
               />
               <RoomInventoryCard
                 type="medium"
                 cost={params.roomCosts.medium}
                 onClick={() => setSelectedRoom('medium')}
                 disabled={staffingCost + params.roomCosts.medium > params.maxStaffingBudget}
+                currencySymbol={currencySymbol}
               />
               <RoomInventoryCard
                 type="low"
                 cost={params.roomCosts.low}
                 onClick={() => setSelectedRoom('low')}
                 disabled={staffingCost + params.roomCosts.low > params.maxStaffingBudget}
+                currencySymbol={currencySymbol}
               />
             </div>
 
@@ -535,11 +645,11 @@ export function GameBoard() {
               <div className="budget-info">
                 <div className="budget-line">
                   <span>Budget Used:</span>
-                  <strong>{formatCurrency(staffingCost)}</strong>
+                  <strong>{formatCurrency(staffingCost, currencySymbol)}</strong>
                 </div>
                 <div className="budget-line">
                   <span>Remaining:</span>
-                  <strong>{formatCurrency(params.maxStaffingBudget - staffingCost)}</strong>
+                  <strong>{formatCurrency(params.maxStaffingBudget - staffingCost, currencySymbol)}</strong>
                 </div>
               </div>
               <Button
@@ -564,7 +674,12 @@ export function GameBoard() {
 
           return (
             <div className="sequencing-controls">
-              <TurnSummary gameState={gameState} />
+              <TurnSummary
+                gameState={gameState}
+                params={params}
+                onItemRevealed={handleItemRevealed}
+                onComplete={handleSummaryComplete}
+              />
 
               {allRoomsFull && gameState.waitingRoom.length > 0 && gameState.currentPhase === 'sequencing' && (
                 <div className="sequencing-warning">
@@ -592,8 +707,9 @@ export function GameBoard() {
                   variant="primary"
                   size="large"
                   onClick={() => completeTurn()}
+                  disabled={!isSummaryComplete}
                 >
-                  Finish Turn
+                  Finish Turn {!isSummaryComplete && '(Reviewing...)'}
                 </Button>
               )}
             </div>

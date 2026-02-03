@@ -47,27 +47,32 @@ export function multinomialSample(n: number, probs: number[]): number[] {
 
 // Generate arrivals for all 24 hours
 export function generateArrivals(params: GameParameters): HourlyArrivals[] {
-  const totalDaily = params.dailyArrivals.A + params.dailyArrivals.B + params.dailyArrivals.C;
-  const typeProportions = [
-    params.dailyArrivals.A / totalDaily,
-    params.dailyArrivals.B / totalDaily,
-    params.dailyArrivals.C / totalDaily
-  ];
+  const arrivals: HourlyArrivals[] = Array.from({ length: 24 }, (_, i) => ({
+    hour: i + 1,
+    A: 0,
+    B: 0,
+    C: 0
+  }));
 
-  const arrivals: HourlyArrivals[] = [];
+  const patientClasses: PatientType[] = ['A', 'B', 'C'];
 
-  for (let hour = 1; hour <= 24; hour++) {
-    const hourlyMean = totalDaily * params.hourlyWeights[hour - 1];
-    const totalArrivals = poissonRandom(hourlyMean);
-    const [aCount, bCount, cCount] = multinomialSample(totalArrivals, typeProportions);
+  patientClasses.forEach((type) => {
+    const totalToDistribute = params.dailyArrivals[type];
+    const weights = params.hourlyWeights[type];
 
-    arrivals.push({
-      hour,
-      A: aCount,
-      B: bCount,
-      C: cCount
-    });
-  }
+    for (let i = 0; i < totalToDistribute; i++) {
+      const rand = Math.random();
+      let cumProb = 0;
+      for (let h = 0; h < 24; h++) {
+        cumProb += weights[h];
+        // Using a small epsilon to handle floating point issues and ensure we assign all patients
+        if (rand < cumProb || h === 23) {
+          arrivals[h][type]++;
+          break;
+        }
+      }
+    }
+  });
 
   return arrivals;
 }
@@ -175,7 +180,8 @@ export function initializePlayerGameState(): PlayerGameState {
       arrived: { A: 0, B: 0, C: 0 },
       turnedAway: { A: 0, B: 0, C: 0 },
       riskEvents: [],
-      completed: []
+      completed: [],
+      waitingCosts: 0
     }
   };
 }
@@ -191,6 +197,8 @@ export function initializePlayerStats(): PlayerStats {
     riskEventCosts: 0,
     hourlyUtilization: [],
     hourlyQueueLength: [],
+    hourlyDemand: { A: [], B: [], C: [] },
+    hourlyAvailableCapacity: { A: [], B: [], C: [] },
     maxWaitingTime: { A: 0, B: 0, C: 0 },
     mismatchTreatments: 0,
     totalTreatments: 0
@@ -216,6 +224,12 @@ export function calculateAverageQueueLength(hourlyQueueLength: number[]): number
   return hourlyQueueLength.reduce((a, b) => a + b, 0) / hourlyQueueLength.length;
 }
 
+// Calculate max queue length
+export function calculateMaxQueueLength(hourlyQueueLength: number[]): number {
+  if (hourlyQueueLength.length === 0) return 0;
+  return Math.max(...hourlyQueueLength);
+}
+
 // Calculate profit
 export function calculateProfit(revenue: number, cost: number): number {
   return revenue - cost;
@@ -228,13 +242,14 @@ export function calculateMismatchPercentage(mismatchTreatments: number, totalTre
 }
 
 // Format currency
-export function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
+export function formatCurrency(amount: number, symbol: string = '$'): string {
+  const formattedAmount = new Intl.NumberFormat('en-US', {
+    style: 'decimal',
     minimumFractionDigits: 0,
     maximumFractionDigits: 0
   }).format(amount);
+
+  return `${symbol}${formattedAmount}`;
 }
 
 // Format percentage
@@ -248,9 +263,13 @@ export function getAvailablePositions(rooms: Room[]): number[] {
   return Array.from({ length: 16 }, (_, i) => i).filter(pos => !occupied.has(pos));
 }
 
-// Validate hourly weights sum to approximately 1
-export function validateHourlyWeights(weights: number[]): boolean {
-  if (weights.length !== 24) return false;
-  const sum = weights.reduce((a, b) => a + b, 0);
-  return Math.abs(sum - 1) < 0.05; // Allow 5% tolerance
+// Validate hourly weights sum to approximately 1 for each class
+export function validateHourlyWeights(weights: { A: number[]; B: number[]; C: number[] }): boolean {
+  const classes: PatientType[] = ['A', 'B', 'C'];
+  return classes.every(type => {
+    const classWeights = weights[type];
+    if (classWeights.length !== 24) return false;
+    const sum = classWeights.reduce((a, b) => a + b, 0);
+    return Math.abs(sum - 1) < 0.05; // Allow 5% tolerance
+  });
 }

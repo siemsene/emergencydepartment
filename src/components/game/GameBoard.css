@@ -31,78 +31,82 @@
   cursor: pointer;
 }
 
-/* Phase Banner */
-.phase-banner {
+/* Game Header (formerly Phase Banner) */
+.game-header {
   background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
   color: white;
-  padding: 1rem 2rem;
+  padding: 0.75rem 2rem;
   border-radius: 12px;
-  margin-bottom: 1rem;
+  margin-bottom: 1.5rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   position: sticky;
-  top: 0;
-  z-index: 20;
+  top: 1rem;
+  z-index: 100;
+  backdrop-filter: blur(8px);
+}
+
+.header-info {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
 }
 
 .hour-display {
-  font-size: 1.5rem;
+  font-size: 1.25rem;
   font-weight: 700;
 }
 
 .phase-display {
-  font-size: 1.125rem;
-  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  padding: 0.35rem 0.75rem;
   background: rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
+  border-radius: 6px;
+  color: #94a3b8;
 }
 
-/* Stats Bar */
-.stats-bar {
+/* Integrated Header Stats */
+.header-stats {
   display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
+  gap: 2rem;
 }
 
-.stat-item {
-  flex: 1;
-  background: white;
-  padding: 1rem 1.5rem;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+.header-stat {
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  align-items: flex-end;
+  gap: 0.1rem;
 }
 
-.stat-label {
-  font-size: 0.875rem;
-  color: #64748b;
+.header-stat .stat-label {
+  font-size: 0.7rem;
+  color: #94a3b8;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  font-weight: 600;
 }
 
-.stat-value {
-  font-size: 1.5rem;
+.header-stat .stat-value {
+  font-size: 1.25rem;
   font-weight: 700;
 }
 
-.stat-item.revenue .stat-value {
-  color: #16a34a;
+.header-stat.revenue .stat-value {
+  color: #4ade80;
 }
 
-.stat-item.cost .stat-value {
-  color: #dc2626;
+.header-stat.cost .stat-value {
+  color: #f87171;
 }
 
-.stat-item.profit.positive .stat-value {
-  color: #16a34a;
+.header-stat.profit.positive .stat-value {
+  color: #4ade80;
 }
 
-.stat-item.profit.negative .stat-value {
-  color: #dc2626;
+.header-stat.profit.negative .stat-value {
+  color: #f87171;
 }
 
 /* Board Layout */

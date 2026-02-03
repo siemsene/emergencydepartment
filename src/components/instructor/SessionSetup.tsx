@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { motion } from 'framer-motion';
 import { useAuth } from '../../contexts/AuthContext';
-import { Session, GameParameters, HourlyArrivals, Player } from '../../types';
+import { Session, GameParameters, HourlyArrivals, Player, PatientType } from '../../types';
 import {
   getSession,
   subscribeToSessionPlayers,
@@ -14,7 +14,7 @@ import {
 } from '../../services/firebaseService';
 import { generateArrivals, calculateArrivalsTotals } from '../../utils/gameUtils';
 import { PREGENERATED_ARRIVALS } from '../../data/pregeneratedArrivals';
-import { DEFAULT_PARAMETERS, HOURS_OF_DAY } from '../../data/gameConstants';
+import { DEFAULT_PARAMETERS, HOURS_OF_DAY, SUPPORTED_CURRENCIES } from '../../data/gameConstants';
 import { Button } from '../shared/Button';
 import { Input } from '../shared/Input';
 import { Modal } from '../shared/Modal';
@@ -57,7 +57,12 @@ export function SessionSetup() {
       const sessionData = await getSession(sessionId);
       if (sessionData) {
         setSession(sessionData);
-        setParameters(sessionData.parameters);
+        setParameters({
+          ...DEFAULT_PARAMETERS,
+          ...sessionData.parameters,
+          hourlyWeights: sessionData.parameters.hourlyWeights ?? DEFAULT_PARAMETERS.hourlyWeights,
+          riskEventRolls: sessionData.parameters.riskEventRolls ?? DEFAULT_PARAMETERS.riskEventRolls
+        });
         if (sessionData.arrivals.length > 0) {
           setArrivals(sessionData.arrivals);
           setUsePregenerated(sessionData.usePregenerated);
@@ -98,10 +103,20 @@ export function SessionSetup() {
     });
   };
 
-  const handleWeightChange = (index: number, value: number) => {
+  const handleWeightChange = (type: PatientType, index: number, value: number) => {
     setParameters(prev => ({
       ...prev,
-      hourlyWeights: prev.hourlyWeights.map((w, i) => i === index ? value : w)
+      hourlyWeights: {
+        ...prev.hourlyWeights,
+        [type]: prev.hourlyWeights[type as keyof typeof prev.hourlyWeights].map((w: number, i: number) => i === index ? value : w)
+      }
+    }));
+  };
+
+  const handleResetWeights = () => {
+    setParameters(prev => ({
+      ...prev,
+      hourlyWeights: DEFAULT_PARAMETERS.hourlyWeights
     }));
   };
 
@@ -290,6 +305,35 @@ export function SessionSetup() {
                   onChange={(e) => handleParameterChange('maxStaffingBudget', Number(e.target.value))}
                 />
               </div>
+              <div className="param-row param-row-full">
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={!!parameters.timeSensitiveWaitingHarms}
+                    onChange={(e) =>
+                      setParameters(prev => ({
+                        ...prev,
+                        timeSensitiveWaitingHarms: e.target.checked
+                      }))
+                    }
+                  />
+                  <span>Time sensitive waiting harms</span>
+                </label>
+              </div>
+              <div className="param-row currency-symbol-row">
+                <label className="input-label">Currency Symbol</label>
+                <div className="currency-options">
+                  {SUPPORTED_CURRENCIES.map(symbol => (
+                    <button
+                      key={symbol}
+                      className={`currency-btn ${parameters.currencySymbol === symbol ? 'active' : ''}`}
+                      onClick={() => handleParameterChange('currencySymbol', symbol as any)}
+                    >
+                      {symbol}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <button
@@ -305,23 +349,34 @@ export function SessionSetup() {
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
               >
-                <h3>Hourly Arrival Weights</h3>
-                <p className="weights-note">
-                  Sum: {parameters.hourlyWeights.reduce((a, b) => a + b, 0).toFixed(4)} (should be close to 1.0)
-                </p>
-                <div className="weights-grid">
-                  {parameters.hourlyWeights.map((weight, i) => (
-                    <div key={i} className="weight-input">
-                      <label>{HOURS_OF_DAY[i]}</label>
-                      <input
-                        type="number"
-                        step="0.001"
-                        value={weight}
-                        onChange={(e) => handleWeightChange(i, Number(e.target.value))}
-                      />
-                    </div>
-                  ))}
+                <div className="weights-header">
+                  <h3>Hourly Arrival Weights</h3>
+                  <Button variant="secondary" size="small" onClick={handleResetWeights}>
+                    Reset to Defaults
+                  </Button>
                 </div>
+
+                {(['A', 'B', 'C'] as PatientType[]).map(type => (
+                  <div key={type} className="class-weights-group">
+                    <h4>Type {type} Weights</h4>
+                    <p className="weights-note">
+                      Sum: {parameters.hourlyWeights[type as keyof typeof parameters.hourlyWeights].reduce((a: number, b: number) => a + b, 0).toFixed(4)}
+                    </p>
+                    <div className="weights-grid">
+                      {parameters.hourlyWeights[type as keyof typeof parameters.hourlyWeights].map((weight: number, i: number) => (
+                        <div key={i} className="weight-input">
+                          <label>{HOURS_OF_DAY[i]}</label>
+                          <input
+                            type="number"
+                            step="0.001"
+                            value={weight}
+                            onChange={(e) => handleWeightChange(type, i, Number(e.target.value))}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </motion.div>
             )}
 

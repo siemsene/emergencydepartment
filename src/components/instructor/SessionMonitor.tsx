@@ -83,11 +83,11 @@ export function SessionMonitor() {
         // Player must have processed arrivals for this hour AND completed it
         // This prevents advancing when players are still in 'waiting' from previous hour
         return p.gameState.currentPhase === 'waiting' &&
-               p.gameState.hourComplete &&
-               lastCompleted >= session.currentHour &&
-               lastArrivals >= session.currentHour &&
-               lastTreatment >= session.currentHour &&
-               lastSequencing >= session.currentHour;
+          p.gameState.hourComplete &&
+          lastCompleted >= session.currentHour &&
+          lastArrivals >= session.currentHour &&
+          lastTreatment >= session.currentHour &&
+          lastSequencing >= session.currentHour;
       });
     }
 
@@ -285,8 +285,8 @@ export function SessionMonitor() {
         <div className="header-right">
           <div className={`status-indicator ${session.status}`}>
             {session.status === 'staffing' ? 'Staffing Phase' :
-             session.status === 'sequencing' ? `Hour ${session.currentHour}: ${HOURS_OF_DAY[session.currentHour - 1] || ''}` :
-             session.status === 'completed' ? 'Completed' : 'Setup'}
+              session.status === 'sequencing' ? `Hour ${session.currentHour}: ${HOURS_OF_DAY[session.currentHour - 1] || ''}` :
+                session.status === 'completed' ? 'Completed' : 'Setup'}
           </div>
           <Button
             variant="danger"
@@ -307,8 +307,8 @@ export function SessionMonitor() {
               className="progress-fill"
               style={{
                 width: `${session.status === 'completed' ? 100 :
-                         session.status === 'sequencing' ? (session.currentHour / 24) * 100 :
-                         session.status === 'staffing' ? 0 : 0}%`
+                  session.status === 'sequencing' ? (session.currentHour / 24) * 100 :
+                    session.status === 'staffing' ? 0 : 0}%`
               }}
             />
           </div>
@@ -357,8 +357,8 @@ export function SessionMonitor() {
                 const isReady = session.status === 'staffing'
                   ? player.gameState.staffingComplete
                   : (player.gameState.hourComplete &&
-                     lastArrivals >= session.currentHour &&
-                     lastCompleted >= session.currentHour);
+                    lastArrivals >= session.currentHour &&
+                    lastCompleted >= session.currentHour);
 
                 return (
                   <motion.div
@@ -376,7 +376,7 @@ export function SessionMonitor() {
                       {player.isConnected ? 'Online' : 'Offline'}
                     </span>
                     <span className={`profit-value ${profit >= 0 ? 'positive' : 'negative'}`}>
-                      {formatCurrency(profit)}
+                      {formatCurrency(profit, session.parameters.currencySymbol || '$')}
                     </span>
                     <span className="queue-count">
                       {player.gameState.waitingRoom.length}

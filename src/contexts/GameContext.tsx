@@ -43,8 +43,8 @@ interface GameContextType {
   // Game progression
   processArrivals: (arrivals: HourlyArrivals) => void;
   processRiskEvents: () => Promise<{ patientId: string; roll: number; isEvent: boolean; type: PatientType }[]>;
-  applyRiskEventResults: (results: { patientId: string; roll: number; isEvent: boolean; type: PatientType }[]) => Promise<void>;
-  processTreatment: () => void;
+  applyRiskEventResults: (results: { patientId: string; roll: number; isEvent: boolean; type: PatientType }[]) => Promise<{ patientId: string; type: PatientType; outcome: 'cardiac_arrest' | 'lwbs' }[]>;
+  processTreatment: (riskEvents?: { patientId: string; type: PatientType; outcome: 'cardiac_arrest' | 'lwbs' }[]) => void;
   completeTurn: () => void;
   resetGame: () => Promise<void>;
   // State sync
@@ -121,7 +121,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
               'arriving': 1,
               'sequencing': 2,
               'rolling': 3,
-              'treating': 4
+              'treating': 4,
+              'review': 5
             };
             const incomingPhaseOrder = phaseOrder[updatedPlayer.gameState.currentPhase] ?? 0;
             const currentPhaseOrder = phaseOrder[prevState.currentPhase] ?? 0;
@@ -338,6 +339,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
     const turnedAway: Patient[] = [];
     let newStats = { ...gameState.stats };
 
+    // Record Demand: Previous Waiting + New Arrivals
+    newStats.hourlyDemand.A.push(gameState.waitingRoom.filter(p => p.type === 'A').length + arrivals.A);
+    newStats.hourlyDemand.B.push(gameState.waitingRoom.filter(p => p.type === 'B').length + arrivals.B);
+    newStats.hourlyDemand.C.push(gameState.waitingRoom.filter(p => p.type === 'C').length + arrivals.C);
+
+    // Record Available Capacity: Empty rooms of each primary type
+    newStats.hourlyAvailableCapacity.A.push(gameState.rooms.filter(r => r.type === 'high' && !r.isOccupied).length);
+    newStats.hourlyAvailableCapacity.B.push(gameState.rooms.filter(r => r.type === 'medium' && !r.isOccupied).length);
+    newStats.hourlyAvailableCapacity.C.push(gameState.rooms.filter(r => r.type === 'low' && !r.isOccupied).length);
+
     newPatients.forEach(patient => {
       if (waitingRoom.length < params.maxWaitingRoom) {
         patient.status = 'waiting';
@@ -369,7 +380,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
         arrived: arrivedCounts,
         turnedAway: turnedAwayCounts,
         riskEvents: [],
-        completed: []
+        completed: [],
+        waitingCosts: 0
       }
     };
 
@@ -494,10 +506,25 @@ export function GameProvider({ children }: { children: ReactNode }) {
     console.log('[RiskEvents] Risk event rolls config:', params.riskEventRolls);
 
     // Roll for each waiting patient
+    const expandRiskRolls = (baseRolls: number[], waitingTime: number) => {
+      const expanded = new Set<number>();
+      const wait = Math.max(0, waitingTime);
+      for (const roll of baseRolls) {
+        for (let i = 0; i <= wait; i++) {
+          const value = roll - i;
+          if (value >= 1) expanded.add(value);
+        }
+      }
+      return Array.from(expanded);
+    };
+
     for (const patient of gameState.waitingRoom) {
       const roll = rollD20();
-      const riskRolls = params.riskEventRolls[patient.type];
-      const isEvent = riskRolls ? riskRolls.includes(roll) : false;
+      const baseRiskRolls = params.riskEventRolls[patient.type] ?? [];
+      const riskRolls = params.timeSensitiveWaitingHarms
+        ? expandRiskRolls(baseRiskRolls, patient.waitingTime ?? 0)
+        : baseRiskRolls;
+      const isEvent = riskRolls.includes(roll);
 
       console.log(`[RiskEvents] Patient ${patient.type}: rolled ${roll}, riskRolls=${JSON.stringify(riskRolls)}, isEvent=${isEvent}`);
 
@@ -516,7 +543,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   ) => {
     if (!gameState || !session) {
       console.warn('[ApplyRisk] No gameState or session!');
-      return;
+      return [];
     }
 
     console.log('[ApplyRisk] Applying results for', results.length, 'patients');
@@ -602,7 +629,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       lastSequencingHour: Math.max(gameState.lastSequencingHour ?? 0, session.currentHour),
       turnEvents: {
         ...gameState.turnEvents,
-        riskEvents: newRiskEvents
+        riskEvents: newRiskEvents,
+        waitingCosts: hourlyWaitingCost
       }
     };
 
@@ -613,6 +641,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
     if (player?.id) {
       await updatePlayerGameState(player.id, newState);
     }
+
+    // Return the risk events so they can be passed to processTreatment
+    return newRiskEvents;
   }, [gameState, session, player?.id]);
 
   // Legacy function for compatibility - just rolls, doesn't apply
@@ -620,7 +651,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     return rollForRiskEvents();
   }, [rollForRiskEvents]);
 
-  const processTreatment = useCallback(async () => {
+  const processTreatment = useCallback(async (riskEvents?: { patientId: string; type: PatientType; outcome: 'cardiac_arrest' | 'lwbs' }[]) => {
     if (!gameState || !session) return;
 
     const treatmentHour = gameState.lastArrivalsHour ?? session.currentHour;
@@ -684,8 +715,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
         }
         additionalRevenue += params.revenuePerPatient[room.patient.type];
 
-        additionalRevenue += params.revenuePerPatient[room.patient.type];
-
         newCompletedList.push({
           patientId: room.patient.id,
           type: room.patient.type
@@ -718,6 +747,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       lastTreatmentHour: treatmentHour,
       turnEvents: {
         ...gameState.turnEvents,
+        // Use passed riskEvents if provided (to avoid stale closure issue)
+        riskEvents: riskEvents ?? gameState.turnEvents.riskEvents,
         completed: newCompletedList
       }
     };

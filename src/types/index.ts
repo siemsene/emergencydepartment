@@ -36,11 +36,13 @@ export interface GameParameters {
   waitingCostPerHour: { A: number; B: number; C: number };
   riskEventRolls: { A: number[]; B: number[]; C: number[] };
   riskEventCost: { A: number; B: number; C: number };
+  timeSensitiveWaitingHarms: boolean;
   maxWaitingRoom: number;
   maxStaffingBudget: number;
   roomCosts: { high: number; medium: number; low: number };
   treatmentTimes: { A: number; B: number; C: number };
-  hourlyWeights: number[];
+  hourlyWeights: { A: number[]; B: number[]; C: number[] };
+  currencySymbol: string;
 }
 
 export interface HourlyArrivals {
@@ -113,6 +115,7 @@ export interface TurnEvents {
   turnedAway: { A: number; B: number; C: number };
   riskEvents: { patientId: string; type: PatientType; outcome: 'cardiac_arrest' | 'lwbs' }[];
   completed: { patientId: string; type: PatientType }[];
+  waitingCosts: number;
 }
 
 export interface PlayerStats {
@@ -124,10 +127,13 @@ export interface PlayerStats {
   riskEventCosts: number;
   hourlyUtilization: number[];
   hourlyQueueLength: number[];
+  hourlyDemand: { A: number[]; B: number[]; C: number[] };
+  hourlyAvailableCapacity: { A: number[]; B: number[]; C: number[] };
   maxWaitingTime: { A: number; B: number; C: number };
   mismatchTreatments: number;
   totalTreatments: number;
 }
+
 
 export interface DiceRoll {
   patientId: string;
@@ -145,7 +151,9 @@ export interface PlayerResult {
   totalCost: number;
   avgUtilization: number;
   avgQueueLength: number;
+  maxQueueLength: number;
   cardiacArrests: number;
+  mismatchCount: number;
   mismatchPercentage: number;
   maxWaitingTime: { A: number; B: number; C: number };
   patientsTreated: { A: number; B: number; C: number };

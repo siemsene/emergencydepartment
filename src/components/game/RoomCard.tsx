@@ -15,6 +15,7 @@ interface RoomCardProps {
   onPatientDrop?: (roomId: string, slotIndex: number) => void;
   onPatientRemove?: (patientId: string) => void;
   showCost?: boolean;
+  currencySymbol?: string;
 }
 
 export function RoomCard({
@@ -25,7 +26,8 @@ export function RoomCard({
   isPatientMovable = false,
   onPatientDrop,
   onPatientRemove,
-  showCost = false
+  showCost = false,
+  currencySymbol = '$'
 }: RoomCardProps) {
   const color = ROOM_COLORS[room.type];
   const slots = getSlotCount(room.type);
@@ -41,7 +43,7 @@ export function RoomCard({
       <div className="room-header" style={{ backgroundColor: color }}>
         <span className="room-name">{roomName}</span>
         {showCost && (
-          <span className="room-cost">{formatCurrency(cost)}</span>
+          <span className="room-cost">{formatCurrency(cost, currencySymbol)}</span>
         )}
       </div>
 
@@ -104,6 +106,7 @@ interface RoomInventoryCardProps {
   disabled?: boolean;
   onClick?: () => void;
   onAdd?: () => void;
+  currencySymbol?: string;
 }
 
 export function RoomInventoryCard({
@@ -112,7 +115,8 @@ export function RoomInventoryCard({
   cost: overrideCost,
   disabled = false,
   onClick,
-  onAdd
+  onAdd,
+  currencySymbol = '$'
 }: RoomInventoryCardProps) {
   const color = ROOM_COLORS[type];
   const name = ROOM_TYPE_NAMES[type];
@@ -139,7 +143,7 @@ export function RoomInventoryCard({
             </div>
           ))}
         </div>
-        <div className="inventory-cost">{formatCurrency(cost)}/day</div>
+        <div className="inventory-cost">{formatCurrency(cost, currencySymbol)}/day</div>
       </div>
       {count !== undefined && (
         <div className="inventory-count">{count}</div>

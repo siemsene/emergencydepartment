@@ -93,6 +93,11 @@
   gap: 0.3rem;
 }
 
+.param-row-full {
+  grid-template-columns: 1fr;
+  margin-top: 0.4rem;
+}
+
 .param-row .input-group {
   min-width: 108px;
 }
@@ -128,10 +133,39 @@
   overflow: hidden;
 }
 
+.weights-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+}
+
+.weights-header h3 {
+  margin: 0;
+}
+
 .weights-note {
   font-size: 0.75rem;
   color: #64748b;
   margin: 0 0 0.75rem;
+}
+
+.class-weights-group {
+  margin-bottom: 1.5rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px dashed #e2e8f0;
+}
+
+.class-weights-group:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.class-weights-group h4 {
+  font-size: 0.8rem;
+  color: #1e293b;
+  margin: 0 0 0.5rem;
 }
 
 .weights-grid {
@@ -368,4 +402,52 @@
   display: flex;
   justify-content: flex-end;
   gap: 1rem;
+}
+
+.currency-symbol-row {
+  grid-template-columns: 1fr;
+  margin-top: 1rem;
+}
+
+.currency-options {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.currency-btn {
+  width: 40px;
+  height: 40px;
+  border: 1px solid #e2e8f0;
+  background: white;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #1e293b;
+}
+
+.currency-btn:hover {
+  background: #f8fafc;
+  border-color: #3b82f6;
+}
+
+.currency-btn.active {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.checkbox-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  color: #1e293b;
+  width: 100%;
+  font-size: 0.8rem;
 }

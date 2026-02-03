@@ -13,6 +13,7 @@ import {
   calculateProfit,
   calculateAverageUtilization,
   calculateAverageQueueLength,
+  calculateMaxQueueLength,
   calculateMismatchPercentage
 } from '../../utils/gameUtils';
 import { HOURS_OF_DAY } from '../../data/gameConstants';
@@ -59,7 +60,9 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
         totalCost: player.gameState.totalCost,
         avgUtilization: calculateAverageUtilization(player.gameState.stats.hourlyUtilization) * 100,
         avgQueueLength: calculateAverageQueueLength(player.gameState.stats.hourlyQueueLength),
+        maxQueueLength: calculateMaxQueueLength(player.gameState.stats.hourlyQueueLength),
         cardiacArrests: player.gameState.stats.cardiacArrests,
+        mismatchCount: player.gameState.stats.mismatchTreatments,
         mismatchPercentage: calculateMismatchPercentage(
           player.gameState.stats.mismatchTreatments,
           player.gameState.stats.totalTreatments
@@ -86,7 +89,9 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
       cost: r.totalCost,
       avgUtilization: r.avgUtilization.toFixed(2),
       avgQueueLength: r.avgQueueLength.toFixed(2),
+      maxQueueLength: r.maxQueueLength,
       cardiacArrests: r.cardiacArrests,
+      mismatchCount: r.mismatchCount,
       mismatchPercent: r.mismatchPercentage.toFixed(2),
       maxWaitA: r.maxWaitingTime.A,
       maxWaitB: r.maxWaitingTime.B,
@@ -164,31 +169,81 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
 
   // Demand vs capacity time series
   const demandCapacityData = session.arrivals.map((arrival, i) => {
-    const avgCapacity = {
-      A: results.reduce((sum, r) => {
-        const aRooms = players.find(p => p.id === r.playerId)?.gameState.rooms.filter(rm => rm.type === 'high').length || 0;
-        return sum + aRooms;
-      }, 0) / results.length,
-      B: results.reduce((sum, r) => {
-        const rooms = players.find(p => p.id === r.playerId)?.gameState.rooms.filter(rm => rm.type === 'high' || rm.type === 'medium').length || 0;
-        return sum + rooms;
-      }, 0) / results.length,
-      C: results.reduce((sum, r) => {
-        const rooms = players.find(p => p.id === r.playerId)?.gameState.rooms.length || 0;
-        return sum + rooms;
-      }, 0) / results.length
+    // Capacity: Available (empty) rooms of each primary type
+    // Falls back to total rooms of that type for older sessions
+    const getAvgCapacity = (type: 'A' | 'B' | 'C') => {
+      const roomTypeMap = { A: 'high', B: 'medium', C: 'low' };
+      const totalAvailable = results.reduce((sum, r) => {
+        const p = players.find(plr => plr.id === r.playerId);
+        const recordedAvailable = p?.gameState.stats.hourlyAvailableCapacity?.[type]?.[i];
+
+        if (recordedAvailable !== undefined) {
+          return sum + recordedAvailable;
+        }
+
+        // Fallback to total rooms of that type if availability wasn't recorded
+        const totalRoomsOfType = p?.gameState.rooms.filter(rm => rm.type === roomTypeMap[type]).length || 0;
+        return sum + totalRoomsOfType;
+      }, 0);
+      return totalAvailable / results.length;
+    };
+
+    // Demand: New arrivals + anyone still waiting from the previous hour
+    // We average this across all players to show typical demand
+    const getAvgDemand = (type: 'A' | 'B' | 'C') => {
+      const totalDemand = results.reduce((sum, r) => {
+        const p = players.find(plr => plr.id === r.playerId);
+        const hourlyDemand = p?.gameState.stats.hourlyDemand?.[type]?.[i];
+        // If we have precise demand data (arrivals + waiting), use it.
+        // Falls back to just arrivals for backwards compatibility with old sessions.
+        return sum + (hourlyDemand !== undefined ? hourlyDemand : arrival[type]);
+      }, 0);
+      return totalDemand / results.length;
     };
 
     return {
       hour: HOURS_OF_DAY[i],
-      'Demand A': arrival.A,
-      'Demand B': arrival.B,
-      'Demand C': arrival.C,
-      'Capacity A': avgCapacity.A,
-      'Capacity B': avgCapacity.B,
-      'Capacity C': avgCapacity.C
+      'Demand A': getAvgDemand('A'),
+      'Demand B': getAvgDemand('B'),
+      'Demand C': getAvgDemand('C'),
+      'Capacity A': getAvgCapacity('A'),
+      'Capacity B': getAvgCapacity('B'),
+      'Capacity C': getAvgCapacity('C')
     };
   });
+
+  const renderDemandCapacityLegend = (props: any) => {
+    const items = props.payload ?? [];
+    if (items.length === 0) return null;
+
+    return (
+      <div className="demand-capacity-legend">
+        <div className="legend-items">
+          {items.map((entry: any) => {
+            const label = String(entry.value ?? entry.dataKey ?? '');
+            const isCapacity = label.startsWith('Capacity');
+            return (
+              <div key={label} className="legend-item">
+                <svg className="legend-swatch" viewBox="0 0 32 6" aria-hidden="true">
+                  <line
+                    x1="0"
+                    y1="3"
+                    x2="32"
+                    y2="3"
+                    stroke={entry.color}
+                    strokeWidth="3"
+                    strokeDasharray={isCapacity ? '6 4' : undefined}
+                    strokeLinecap="round"
+                  />
+                </svg>
+                <span className="legend-label">{label}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="game-results">
@@ -202,16 +257,22 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
           <h1>Game Results</h1>
           <span className="session-name">{session.name}</span>
         </div>
-        {!playerId && (
-          <div className="header-actions">
-            <Button variant="secondary" onClick={handleDownloadData}>
-              Download Data (CSV)
+        <div className="header-actions">
+          {!playerId ? (
+            <>
+              <Button variant="secondary" onClick={handleDownloadData}>
+                Download Data (CSV)
+              </Button>
+              <Button variant="primary" onClick={handleExportPDF} loading={isExporting}>
+                Export PDF
+              </Button>
+            </>
+          ) : (
+            <Button variant="primary" onClick={() => navigate('/')}>
+              Join New Session
             </Button>
-            <Button variant="primary" onClick={handleExportPDF} loading={isExporting}>
-              Export PDF
-            </Button>
-          </div>
-        )}
+          )}
+        </div>
       </header>
 
       <div className="results-content" ref={resultsRef}>
@@ -224,9 +285,9 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
               <span>Player</span>
               <span>Profit</span>
               <span>Avg Utilization</span>
-              <span>Avg Queue</span>
+              <span>Avg/Max Queue</span>
               <span>Cardiac Arrests</span>
-              <span>Mismatch %</span>
+              <span>Mismatches</span>
               <span>Max Wait (A/B/C)</span>
             </div>
             {results.map((result, index) => (
@@ -239,14 +300,14 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
                 </span>
                 <span className="player-name">{result.playerName}</span>
                 <span className={`profit ${result.totalProfit >= 0 ? 'positive' : 'negative'}`}>
-                  {formatCurrency(result.totalProfit)}
+                  {formatCurrency(result.totalProfit, session.parameters.currencySymbol || '$')}
                 </span>
                 <span>{result.avgUtilization.toFixed(1)}%</span>
-                <span>{result.avgQueueLength.toFixed(1)}</span>
+                <span>{result.avgQueueLength.toFixed(1)} / {result.maxQueueLength}</span>
                 <span className={result.cardiacArrests > 0 ? 'danger' : ''}>
                   {result.cardiacArrests}
                 </span>
-                <span>{result.mismatchPercentage.toFixed(1)}%</span>
+                <span>{result.mismatchCount}</span>
                 <span>{result.maxWaitingTime.A}/{result.maxWaitingTime.B}/{result.maxWaitingTime.C}</span>
               </div>
             ))}
@@ -306,7 +367,7 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
                 <XAxis dataKey="hour" angle={-45} textAnchor="end" interval={1} tick={{ fontSize: 10 }} />
                 <YAxis />
                 <Tooltip />
-                <Legend />
+                <Legend content={renderDemandCapacityLegend} />
                 <Line type="monotone" dataKey="Demand A" stroke="#dc2626" strokeWidth={2} />
                 <Line type="monotone" dataKey="Demand B" stroke="#eab308" strokeWidth={2} />
                 <Line type="monotone" dataKey="Demand C" stroke="#2563eb" strokeWidth={2} />

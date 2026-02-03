@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Patient, PatientType } from '../../types';
+import { Patient, PatientType, GameParameters } from '../../types';
 import { PatientChip } from './PatientChip';
 import './WaitingQueue.css';
 
@@ -12,6 +12,8 @@ interface WaitingQueueProps {
   showDice?: boolean;
   diceResults?: Map<string, { roll: number; isEvent: boolean }>;
   isRolling?: boolean;
+  riskEventRolls?: GameParameters['riskEventRolls'];
+  timeSensitiveWaitingHarms?: boolean;
 }
 
 export function WaitingQueue({
@@ -21,7 +23,9 @@ export function WaitingQueue({
   onPatientClick,
   showDice = false,
   diceResults,
-  isRolling = false
+  isRolling = false,
+  riskEventRolls,
+  timeSensitiveWaitingHarms = false
 }: WaitingQueueProps) {
   return (
     <div className="waiting-queue">
@@ -37,6 +41,15 @@ export function WaitingQueue({
             const isSelected = selectedPatientId === patient.id;
 
             const hasRiskEvent = diceResult?.isEvent;
+            const rollValue = diceResult?.roll;
+            const baseRiskRolls = riskEventRolls?.[patient.type] ?? [];
+            const riskRollsForType = timeSensitiveWaitingHarms && (patient.waitingTime ?? 0) > 0
+              ? baseRiskRolls.flatMap((roll) => {
+                const wait = Math.max(0, patient.waitingTime ?? 0);
+                return Array.from({ length: wait + 1 }, (_, i) => roll - i).filter(v => v >= 1);
+              })
+              : baseRiskRolls;
+            const isRiskRoll = rollValue !== undefined && riskRollsForType.includes(rollValue);
 
             return (
               <motion.div
@@ -61,6 +74,7 @@ export function WaitingQueue({
                   onClick={() => onPatientClick?.(patient.id)}
                   showDice={showDice}
                   diceValue={diceResult?.roll}
+                  diceIsEvent={isRiskRoll}
                   isRolling={isRolling && !diceResult?.isEvent}
                   size="medium"
                 />

@@ -9,6 +9,7 @@ interface PatientChipProps {
   isDragging?: boolean;
   showDice?: boolean;
   diceValue?: number;
+  diceIsEvent?: boolean;
   isRolling?: boolean;
   onClick?: () => void;
   size?: 'small' | 'medium' | 'large';
@@ -20,6 +21,7 @@ export function PatientChip({
   isDragging = false,
   showDice = false,
   diceValue,
+  diceIsEvent = false,
   isRolling = false,
   onClick,
   size = 'medium',
@@ -45,7 +47,7 @@ export function PatientChip({
 
       {showDice && (
         <div className={`dice-indicator ${isRolling ? 'rolling' : ''}`}>
-          <D20Face value={diceValue} isRolling={isRolling} />
+          <D20Face value={diceValue} isRolling={isRolling} isEvent={diceIsEvent} />
         </div>
       )}
     </motion.div>
@@ -55,11 +57,12 @@ export function PatientChip({
 interface D20FaceProps {
   value?: number;
   isRolling?: boolean;
+  isEvent?: boolean;
 }
 
-function D20Face({ value, isRolling }: D20FaceProps) {
-  // Determine if this is a risk event roll (for highlighting)
-  const isHighRoll = value && value >= 18;
+function D20Face({ value, isRolling, isEvent = false }: D20FaceProps) {
+  // Use actual isEvent flag instead of checking roll value
+  const isHighRoll = isEvent;
 
   // Colors based on whether it's a high (dangerous) roll
   const mainColor = isHighRoll ? '#991b1b' : '#1e293b';

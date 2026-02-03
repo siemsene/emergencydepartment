@@ -168,3 +168,36 @@
   font-size: 1rem;
   color: #1e293b;
 }
+
+/* Demand vs Capacity legend */
+.demand-capacity-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem 0;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.demand-capacity-legend .legend-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.demand-capacity-legend .legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.demand-capacity-legend .legend-swatch {
+  width: 32px;
+  height: 6px;
+  display: block;
+}
+
+.demand-capacity-legend .legend-label {
+  font-weight: 500;
+  color: #1e293b;
+}
