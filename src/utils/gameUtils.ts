@@ -7,7 +7,8 @@ import {
   Room,
   RoomType,
   PlayerGameState,
-  PlayerStats
+  PlayerStats,
+  Session
 } from '../types';
 import { DEFAULT_PARAMETERS, ROOM_COMPATIBILITY, PATIENT_ROOM_OPTIONS } from '../data/gameConstants';
 
@@ -171,6 +172,7 @@ export function initializePlayerGameState(): PlayerGameState {
     staffingCost: 0,
     staffingComplete: false,
     currentPhase: 'arriving',
+    currentHour: 0,
     hourComplete: false,
     lastCompletedHour: 0,
     lastArrivalsHour: 0,
@@ -263,6 +265,12 @@ export function formatPercentage(value: number, decimals: number = 1): string {
 export function getAvailablePositions(rooms: Room[]): number[] {
   const occupied = new Set(rooms.map(r => r.position));
   return Array.from({ length: 16 }, (_, i) => i).filter(pos => !occupied.has(pos));
+}
+
+// Get effective hour: player's own hour in async mode, session hour in sync mode
+export function getEffectiveHour(session: Session | null, gameState: PlayerGameState | null): number {
+  if (!session || !gameState) return 0;
+  return session.asyncMode ? gameState.currentHour : session.currentHour;
 }
 
 // Validate hourly weights sum to approximately 1 for each class

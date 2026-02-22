@@ -7,7 +7,8 @@
       "Bash(npx tsc:*)",
       "Bash(xargs cat:*)",
       "Bash(git -C /c/Users/siems/games/emergencydepartment log --all --full-history --oneline -- .env)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(npx vite build:*)"
     ]
   }
 }

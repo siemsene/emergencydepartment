@@ -128,7 +128,8 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
         maxWaitingTime: player.gameState.stats.maxWaitingTime,
         patientsTreated: player.gameState.stats.patientsTreated,
         staffingCost: player.gameState.staffingCost,
-        waitingCosts: player.gameState.stats.waitingCosts
+        waitingCosts: player.gameState.stats.waitingCosts,
+        hoursCompleted: player.gameState.lastCompletedHour ?? 0
       }));
 
       // Build staffing map from player room data
@@ -342,6 +343,9 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
                 <span className="player-name">
                   <span className="rank">{index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`}</span>
                   {result.playerName}
+                  {session?.asyncMode && result.hoursCompleted < 24 && (
+                    <span className="in-progress-badge">({result.hoursCompleted}/24 hrs)</span>
+                  )}
                 </span>
                 <span className={`profit ${result.totalProfit >= 0 ? 'positive' : 'negative'}`}>
                   {formatCurrency(result.totalProfit, session.parameters.currencySymbol || '$')}

@@ -77,6 +77,8 @@ export function SessionMonitor() {
 
   const allPlayersReady = useCallback(() => {
     if (players.length === 0) return false;
+    // In async mode, no session-level auto-advance — each player advances themselves
+    if (session?.asyncMode) return false;
 
     if (session?.status === 'staffing') {
       return players.every(p => p.gameState.staffingComplete);
@@ -100,7 +102,7 @@ export function SessionMonitor() {
     }
 
     return false;
-  }, [players, session?.status, session?.currentHour]);
+  }, [players, session?.status, session?.currentHour, session?.asyncMode]);
 
   const handleAdvanceGame = useCallback(async () => {
     if (!sessionId || !session) return;
@@ -150,7 +152,29 @@ export function SessionMonitor() {
     const player = players.find(p => p.id === playerId);
     if (!player || !session) return;
 
-    if (session.status === 'staffing') {
+    if (session.asyncMode) {
+      if (!player.gameState.staffingComplete) {
+        // Force complete staffing in async mode
+        await updatePlayerGameStateFields(playerId, {
+          staffingComplete: true,
+          totalCost: player.gameState.staffingCost,
+          currentHour: 1,
+          currentPhase: 'arriving',
+          hourComplete: false
+        });
+      } else {
+        // Force complete the player's current hour in async mode
+        const playerHour = player.gameState.currentHour ?? 0;
+        await updatePlayerGameStateFields(playerId, {
+          currentPhase: playerHour < 24 ? 'arriving' : 'arriving',
+          hourComplete: playerHour >= 24,
+          currentHour: Math.min(playerHour + 1, 24),
+          lastCompletedHour: playerHour,
+          lastTreatmentHour: playerHour,
+          lastSequencingHour: playerHour
+        });
+      }
+    } else if (session.status === 'staffing') {
       // Force complete staffing: preserve their current room choices
       await updatePlayerGameStateFields(playerId, {
         staffingComplete: true,
@@ -171,6 +195,7 @@ export function SessionMonitor() {
 
   useEffect(() => {
     if (!session || !sessionId) return;
+    if (session.asyncMode) return; // No auto-advance in async mode
     if (session.status !== 'staffing' && session.status !== 'sequencing') return;
     if (!allPlayersReady()) return;
     if (session.status === 'sequencing' && Date.now() - lastHourChangeAtRef.current < 1000) return;
@@ -190,11 +215,21 @@ export function SessionMonitor() {
         const lastArrivalsHour = player.gameState.lastArrivalsHour ?? 0;
         const lastSequencingHour = player.gameState.lastSequencingHour ?? 0;
 
+        // In async mode, use player's own hour; in sync mode, use session hour
+        const effectiveHour = session.asyncMode
+          ? (player.gameState.currentHour ?? 0)
+          : session.currentHour;
+
+        // Skip players that haven't started yet (async: still staffing)
+        if (session.asyncMode && !player.gameState.staffingComplete) continue;
+        // Skip players that have finished all 24 hours
+        if (session.asyncMode && lastCompletedHour >= 24) continue;
+
         // IMPORTANT: Don't rescue 'waiting' phase if arrivals haven't been processed yet.
         // This prevents incorrectly marking the player as complete for a new hour
         // when they're still in 'waiting' from the previous hour.
-        const arrivalsProcessedForCurrentHour = lastArrivalsHour >= session.currentHour;
-        const sequencingSubmittedForCurrentHour = lastSequencingHour >= session.currentHour;
+        const arrivalsProcessedForCurrentHour = lastArrivalsHour >= effectiveHour;
+        const sequencingSubmittedForCurrentHour = lastSequencingHour >= effectiveHour;
 
         // Player is in 'waiting' phase but hourComplete is false - set it to true
         // Only do this if arrivals have been processed (meaning they actually went through this hour)
@@ -203,12 +238,12 @@ export function SessionMonitor() {
           !player.gameState.hourComplete &&
           arrivalsProcessedForCurrentHour &&
           sequencingSubmittedForCurrentHour &&
-          lastTreatmentHour < session.currentHour
+          lastTreatmentHour < effectiveHour
         ) {
           await updatePlayerGameStateFields(player.id, {
             hourComplete: true,
-            lastCompletedHour: session.currentHour,
-            lastTreatmentHour: session.currentHour
+            lastCompletedHour: effectiveHour,
+            lastTreatmentHour: effectiveHour
           });
           continue;
         }
@@ -218,21 +253,21 @@ export function SessionMonitor() {
         if (
           player.gameState.currentPhase === 'waiting' &&
           player.gameState.hourComplete &&
-          lastCompletedHour < session.currentHour &&
+          lastCompletedHour < effectiveHour &&
           arrivalsProcessedForCurrentHour &&
           sequencingSubmittedForCurrentHour &&
-          lastTreatmentHour < session.currentHour
+          lastTreatmentHour < effectiveHour
         ) {
           await updatePlayerGameStateFields(player.id, {
-            lastCompletedHour: session.currentHour,
-            lastTreatmentHour: session.currentHour
+            lastCompletedHour: effectiveHour,
+            lastTreatmentHour: effectiveHour
           });
           continue;
         }
 
         // Player is stuck in 'treating' phase with no active treatments
         // Only rescue if treatment hasn't been processed for this hour yet
-        if (player.gameState.currentPhase === 'treating' && lastTreatmentHour < session.currentHour) {
+        if (player.gameState.currentPhase === 'treating' && lastTreatmentHour < effectiveHour) {
           const hasActiveTreatment = player.gameState.rooms.some(
             room => room.isOccupied && room.patient && (room.patient.treatmentProgress || 0) > 0
           );
@@ -243,8 +278,8 @@ export function SessionMonitor() {
             await updatePlayerGameStateFields(player.id, {
               currentPhase: 'waiting',
               hourComplete: true,
-              lastCompletedHour: session.currentHour,
-              lastTreatmentHour: session.currentHour
+              lastCompletedHour: effectiveHour,
+              lastTreatmentHour: effectiveHour
             });
           }
         }
@@ -266,6 +301,15 @@ export function SessionMonitor() {
   }
 
   const getPlayerStatus = (player: Player) => {
+    if (session.asyncMode) {
+      // Async mode: show per-player progress
+      if (!player.gameState.staffingComplete) return 'Staffing...';
+      const playerHour = player.gameState.currentHour ?? 0;
+      const lastCompleted = player.gameState.lastCompletedHour ?? 0;
+      if (lastCompleted >= 24) return 'Finished (24/24)';
+      return `Hour ${playerHour}/24 - ${player.gameState.currentPhase}`;
+    }
+
     if (session.status === 'staffing') {
       return player.gameState.staffingComplete ? 'Ready' : 'Staffing...';
     }
@@ -301,7 +345,8 @@ export function SessionMonitor() {
         </div>
         <div className="header-right">
           <div className={`status-indicator ${session.status}`}>
-            {session.status === 'staffing' ? 'Staffing Phase' :
+            {session.asyncMode && session.status === 'sequencing' ? 'Async Mode' :
+              session.status === 'staffing' ? 'Staffing Phase' :
               session.status === 'sequencing' ? `Hour ${session.currentHour}: ${HOURS_OF_DAY[session.currentHour - 1] || ''}` :
                 session.status === 'completed' ? 'Completed' : 'Setup'}
           </div>
@@ -324,7 +369,9 @@ export function SessionMonitor() {
               className="progress-fill"
               style={{
                 width: `${session.status === 'completed' ? 100 :
-                  session.status === 'sequencing' ? (session.currentHour / 24) * 100 :
+                  session.asyncMode && session.status === 'sequencing' && players.length > 0
+                    ? (players.reduce((sum, p) => sum + (p.gameState.lastCompletedHour ?? 0), 0) / players.length / 24) * 100
+                    : session.status === 'sequencing' ? (session.currentHour / 24) * 100 :
                     session.status === 'staffing' ? 0 : 0}%`
               }}
             />
@@ -368,14 +415,16 @@ export function SessionMonitor() {
                   player.gameState.totalRevenue,
                   player.gameState.totalCost
                 );
-                // Check if player is truly ready for the CURRENT hour
+                // Check if player is truly ready
                 const lastArrivals = player.gameState.lastArrivalsHour ?? 0;
                 const lastCompleted = player.gameState.lastCompletedHour ?? 0;
-                const isReady = session.status === 'staffing'
-                  ? player.gameState.staffingComplete
-                  : (player.gameState.hourComplete &&
-                    lastArrivals >= session.currentHour &&
-                    lastCompleted >= session.currentHour);
+                const isReady = session.asyncMode
+                  ? lastCompleted >= 24
+                  : session.status === 'staffing'
+                    ? player.gameState.staffingComplete
+                    : (player.gameState.hourComplete &&
+                      lastArrivals >= session.currentHour &&
+                      lastCompleted >= session.currentHour);
 
                 return (
                   <motion.div
@@ -438,7 +487,7 @@ export function SessionMonitor() {
           </div>
         </div>
 
-        {session.status === 'sequencing' && (
+        {session.status === 'sequencing' && !session.asyncMode && (
           <div className="arrivals-section">
             <h2>Current Hour Arrivals</h2>
             <div className="arrivals-display">

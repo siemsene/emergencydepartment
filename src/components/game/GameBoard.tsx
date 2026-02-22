@@ -65,9 +65,16 @@ export function GameBoard() {
     };
   }, []);
 
-  const isStaffingPhase = session?.status === 'staffing';
-  const isSequencingPhase = session?.status === 'sequencing';
-  const currentHour = session?.currentHour || 0;
+  const isAsyncMode = !!session?.asyncMode;
+  // In async mode, show staffing UI based on player's own staffingComplete flag
+  const isStaffingPhase = isAsyncMode
+    ? !gameState?.staffingComplete
+    : session?.status === 'staffing';
+  const isSequencingPhase = isAsyncMode
+    ? (session?.status === 'sequencing' && !!gameState?.staffingComplete)
+    : session?.status === 'sequencing';
+  // In async mode, use the player's own hour
+  const currentHour = isAsyncMode ? (gameState?.currentHour || 0) : (session?.currentHour || 0);
   const params = session?.parameters || DEFAULT_PARAMETERS;
 
   // Clear animation timers when session phase changes (e.g., session ends)
@@ -97,7 +104,7 @@ export function GameBoard() {
         setPhaseBanner('Patients Receiving Treatment');
         break;
       case 'waiting':
-        setPhaseBanner('Waiting for Other Players');
+        setPhaseBanner(isAsyncMode ? 'Turn Complete' : 'Waiting for Other Players');
         break;
     }
   }, [gameState?.currentPhase]);
@@ -166,6 +173,7 @@ export function GameBoard() {
     isSequencingPhase,
     session?.arrivals,
     gameState?.currentPhase,
+    gameState?.currentHour,
     gameState?.lastArrivalsHour,
     processArrivals
   ]);
@@ -682,7 +690,7 @@ export function GameBoard() {
         )}
 
         {/* Sequencing Controls */}
-        {!isStaffingPhase && (() => {
+        {!isStaffingPhase && !(isAsyncMode && gameState.lastCompletedHour >= 24) && (() => {
           const emptyRooms = gameState.rooms.filter(r => !r.isOccupied);
           const hasAssignablePatient = gameState.waitingRoom.some(patient =>
             emptyRooms.some(room => canTreatInRoom(patient.type, room.type))
@@ -734,8 +742,18 @@ export function GameBoard() {
           );
         })()}
 
-        {/* Waiting For Players Message */}
-        {gameState.currentPhase === 'waiting' && (
+        {/* Async mode: Finished all 24 hours */}
+        {isAsyncMode && gameState.lastCompletedHour >= 24 && (
+          <div className="waiting-message-container">
+            <div className="waiting-message">
+              <h3>All 24 Hours Complete!</h3>
+              <p>You have completed all 24 hours. Waiting for the instructor to end the session and show results.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Waiting For Players Message (sync mode only) */}
+        {!isAsyncMode && gameState.currentPhase === 'waiting' && (
           <div className="waiting-message-container">
             <div className="waiting-message">
               <h3>Waiting for other players...</h3>

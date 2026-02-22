@@ -216,3 +216,16 @@
   font-weight: 500;
   color: #1e293b;
 }
+
+/* In-progress badge for async mode */
+.in-progress-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #92400e;
+  background: #fef3c7;
+  border-radius: 4px;
+  vertical-align: middle;
+}

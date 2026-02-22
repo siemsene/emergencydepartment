@@ -33,6 +33,7 @@ export function SessionSetup() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [asyncMode, setAsyncMode] = useState(false);
   const [kickPlayerId, setKickPlayerId] = useState<string | null>(null);
   const [isKicking, setIsKicking] = useState(false);
 
@@ -63,6 +64,7 @@ export function SessionSetup() {
           hourlyWeights: sessionData.parameters.hourlyWeights ?? DEFAULT_PARAMETERS.hourlyWeights,
           riskEventRolls: sessionData.parameters.riskEventRolls ?? DEFAULT_PARAMETERS.riskEventRolls
         });
+        setAsyncMode(!!sessionData.asyncMode);
         if (sessionData.arrivals.length > 0) {
           setArrivals(sessionData.arrivals);
           setUsePregenerated(sessionData.usePregenerated);
@@ -138,7 +140,7 @@ export function SessionSetup() {
     if (!sessionId || hasRevenueErrors || hasWaitCostErrors || hasRiskCostErrors || budgetError) return;
 
     await handleSaveParameters();
-    await startSession(sessionId);
+    await startSession(sessionId, asyncMode);
     navigate(`/instructor/session/${sessionId}/monitor`);
   };
 
@@ -372,6 +374,16 @@ export function SessionSetup() {
                     }
                   />
                   <span>Time sensitive waiting harms</span>
+                </label>
+              </div>
+              <div className="param-row param-row-full">
+                <label className="checkbox-row">
+                  <input
+                    type="checkbox"
+                    checked={asyncMode}
+                    onChange={(e) => setAsyncMode(e.target.checked)}
+                  />
+                  <span>Async mode (players progress independently)</span>
                 </label>
               </div>
               <div className="param-row currency-symbol-row">

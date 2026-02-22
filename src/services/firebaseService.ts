@@ -158,7 +158,8 @@ export async function createSession(
     parameters,
     arrivals: [],
     players: [],
-    usePregenerated: false
+    usePregenerated: false,
+    asyncMode: false
   };
 
   await setDoc(doc(db, 'sessions', sessionId), {
@@ -241,11 +242,22 @@ export async function updateSessionArrivals(sessionId: string, arrivals: HourlyA
   await updateDoc(doc(db, 'sessions', sessionId), { arrivals, usePregenerated });
 }
 
-export async function startSession(sessionId: string) {
-  await updateDoc(doc(db, 'sessions', sessionId), {
-    status: 'staffing',
-    startedAt: serverTimestamp()
-  });
+export async function startSession(sessionId: string, asyncMode?: boolean) {
+  if (asyncMode) {
+    // In async mode, skip the session-level staffing phase and go directly to sequencing.
+    // Players will still see staffing UI based on their own staffingComplete flag.
+    await updateDoc(doc(db, 'sessions', sessionId), {
+      status: 'sequencing',
+      currentHour: 1,
+      asyncMode: true,
+      startedAt: serverTimestamp()
+    });
+  } else {
+    await updateDoc(doc(db, 'sessions', sessionId), {
+      status: 'staffing',
+      startedAt: serverTimestamp()
+    });
+  }
 }
 
 export async function advanceSessionToSequencing(sessionId: string) {

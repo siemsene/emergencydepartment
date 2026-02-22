@@ -20,7 +20,8 @@ import {
   calculateUtilization,
   isMismatchRoom,
   canTreatInRoom,
-  initializePlayerGameState
+  initializePlayerGameState,
+  getEffectiveHour
 } from '../utils/gameUtils';
 import { DEFAULT_PARAMETERS } from '../data/gameConstants';
 
@@ -135,6 +136,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   // This ensures the game progresses even without the instructor dashboard open
   useEffect(() => {
     if (!session || !gameState || !player?.id) return;
+    // In async mode, players advance themselves — no session-level auto-advance needed
+    if (session.asyncMode) return;
     if (session.status !== 'sequencing') return;
     if (gameState.currentPhase !== 'waiting') return;
     if (!gameState.hourComplete) return;
@@ -248,31 +251,69 @@ export function GameProvider({ children }: { children: ReactNode }) {
   }, [gameState]);
 
   const completeStaffing = useCallback(async () => {
-    if (!gameState || !player?.id) return;
+    if (!gameState || !player?.id || !session) return;
 
-    const newState = withVersion({
-      ...gameState,
-      staffingComplete: true,
-      totalCost: gameState.staffingCost,
-      hourComplete: true
-    });
-
-    setGameState(newState);
-    await updatePlayerGameState(player.id, newState);
-  }, [gameState, player?.id, session?.currentHour, withVersion]);
+    if (session.asyncMode) {
+      // Async mode: immediately start hour 1 after staffing
+      const newState = withVersion({
+        ...gameState,
+        staffingComplete: true,
+        totalCost: gameState.staffingCost,
+        hourComplete: false,
+        currentHour: 1,
+        currentPhase: 'arriving' as const
+      });
+      setGameState(newState);
+      await updatePlayerGameState(player.id, newState);
+    } else {
+      // Sync mode: wait for other players
+      const newState = withVersion({
+        ...gameState,
+        staffingComplete: true,
+        totalCost: gameState.staffingCost,
+        hourComplete: true
+      });
+      setGameState(newState);
+      await updatePlayerGameState(player.id, newState);
+    }
+  }, [gameState, player?.id, session, withVersion]);
 
   const completeTurn = useCallback(async () => {
-    if (!gameState || !player?.id) return;
+    if (!gameState || !player?.id || !session) return;
 
-    const newState = withVersion({
-      ...gameState,
-      currentPhase: 'waiting' as const,
-      hourComplete: true
-    });
-
-    setGameState(newState);
-    await updatePlayerGameState(player.id, newState);
-  }, [gameState, player?.id, withVersion]);
+    if (session.asyncMode) {
+      // Async mode: advance to next hour immediately, or mark as finished
+      const playerHour = gameState.currentHour;
+      if (playerHour < 24) {
+        const newState = withVersion({
+          ...gameState,
+          currentHour: playerHour + 1,
+          currentPhase: 'arriving' as const,
+          hourComplete: false
+        });
+        setGameState(newState);
+        await updatePlayerGameState(player.id, newState);
+      } else {
+        // Hour 24 completed — player is done
+        const newState = withVersion({
+          ...gameState,
+          hourComplete: true,
+          currentPhase: 'arriving' as const
+        });
+        setGameState(newState);
+        await updatePlayerGameState(player.id, newState);
+      }
+    } else {
+      // Sync mode: enter waiting phase
+      const newState = withVersion({
+        ...gameState,
+        currentPhase: 'waiting' as const,
+        hourComplete: true
+      });
+      setGameState(newState);
+      await updatePlayerGameState(player.id, newState);
+    }
+  }, [gameState, player?.id, session, withVersion]);
 
   const resetGame = useCallback(async () => {
     if (!player || !session?.id) return;
@@ -284,7 +325,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const processArrivals = useCallback((arrivals: HourlyArrivals) => {
     if (!gameState || !session) return;
 
-    const currentHour = session.currentHour;
+    const currentHour = getEffectiveHour(session, gameState);
 
     // Prevent duplicate processing for the same hour (handle undefined for backwards compat)
     const lastArrivalsHour = gameState.lastArrivalsHour ?? 0;
@@ -454,15 +495,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
     // Only allow completing sequencing if we're actually in the sequencing phase
     if (gameState.currentPhase !== 'sequencing') return;
 
+    const effectiveHour = getEffectiveHour(session ?? null, gameState);
     const newState = withVersion({
       ...gameState,
       currentPhase: 'rolling' as const,
-      lastSequencingHour: session?.currentHour ?? gameState.lastArrivalsHour ?? 0
+      lastSequencingHour: effectiveHour || gameState.lastArrivalsHour || 0
     });
 
     setGameState(newState);
     await updatePlayerGameState(player.id, newState);
-  }, [gameState, player?.id, session?.currentHour, withVersion]);
+  }, [gameState, player?.id, session, withVersion]);
 
   // Phase 1: Roll dice for risk events (doesn't remove patients yet)
   const rollForRiskEvents = useCallback(() => {
@@ -605,7 +647,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       totalCost: gameState.totalCost + additionalCosts + hourlyWaitingCost,
       stats: newStats,
       currentPhase: 'treating' as const,
-      lastSequencingHour: Math.max(gameState.lastSequencingHour ?? 0, session.currentHour),
+      lastSequencingHour: Math.max(gameState.lastSequencingHour ?? 0, getEffectiveHour(session, gameState)),
       turnEvents: {
         ...gameState.turnEvents,
         riskEvents: newRiskEvents,
@@ -636,7 +678,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const processTreatment = useCallback(async (riskEvents?: { patientId: string; type: PatientType; outcome: 'cardiac_arrest' | 'lwbs' }[]) => {
     if (!gameState || !session) return;
 
-    const treatmentHour = gameState.lastArrivalsHour ?? session.currentHour;
+    const effectiveHour = getEffectiveHour(session, gameState);
+    const treatmentHour = gameState.lastArrivalsHour ?? effectiveHour;
 
     // Prevent duplicate processing for the same hour (handle undefined for backwards compat)
     const lastTreatmentHour = gameState.lastTreatmentHour ?? 0;

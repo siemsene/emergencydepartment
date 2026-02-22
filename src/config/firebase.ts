@@ -18,7 +18,7 @@ const app = initializeApp(firebaseConfig);
 // App Check — use debug token in development, reCAPTCHA Enterprise in production
 if (import.meta.env.DEV) {
   // @ts-expect-error Firebase App Check debug token for local development
-  self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+  self.FIREBASE_APPCHECK_DEBUG_TOKEN = import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || true;
 }
 
 const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY;

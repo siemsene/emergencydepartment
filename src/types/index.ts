@@ -68,6 +68,7 @@ export interface Session {
   arrivals: HourlyArrivals[];
   players: string[];
   usePregenerated: boolean;
+  asyncMode?: boolean;
 }
 
 // Game State Types
@@ -107,6 +108,7 @@ export interface PlayerGameState {
   lastArrivalsHour: number; // Track which hour arrivals were last processed
   lastTreatmentHour: number; // Track which hour treatment was last processed
   lastSequencingHour: number; // Track which hour sequencing was submitted
+  currentHour: number; // Player's own hour (used in async mode; mirrors session.currentHour in sync)
   stateVersion: number; // Monotonically increasing counter for optimistic concurrency
   stats: PlayerStats;
   turnEvents: TurnEvents;
@@ -161,6 +163,7 @@ export interface PlayerResult {
   patientsTreated: { A: number; B: number; C: number };
   staffingCost: number;
   waitingCosts: number;
+  hoursCompleted: number;
 }
 
 export interface SessionResults {
