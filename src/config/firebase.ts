@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
 
 // Firebase configuration - Replace with your own config
 const firebaseConfig = {
@@ -13,6 +14,21 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+
+// App Check — use debug token in development, reCAPTCHA Enterprise in production
+if (import.meta.env.DEV) {
+  // @ts-expect-error Firebase App Check debug token for local development
+  self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+}
+
+const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY;
+if (recaptchaSiteKey) {
+  initializeAppCheck(app, {
+    provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+    isTokenAutoRefreshEnabled: true
+  });
+}
+
 export const db = getFirestore(app);
 export const auth = getAuth(app);
 export default app;
