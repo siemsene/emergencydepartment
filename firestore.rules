@@ -16,13 +16,25 @@ service cloud.firestore {
       allow update, delete: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
     }
 
-    // Players are unauthenticated in this app, so reads/writes are open.
     match /sessions/{sessionId} {
-      allow read, write: if true;
+      // Anyone can read sessions (players need to look up by code)
+      allow read: if true;
+      // Only authenticated instructors can write to sessions
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
     }
 
     match /players/{playerId} {
-      allow read, write: if true;
+      // Anyone can read players
+      allow read: if true;
+      // Anyone can create a player (joining a session)
+      allow create: if true;
+      // Anyone can update a player, but only allowed fields
+      allow update: if request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['gameState', 'isConnected', 'lastSeen']);
+      // Only authenticated users (instructors) can delete players
+      allow delete: if isSignedIn();
     }
   }
 }

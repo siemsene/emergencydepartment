@@ -174,12 +174,6 @@ export function PlayerGame() {
   // Show game board
   return (
     <div className="player-game">
-      <div className="player-header">
-        <div className="player-info">
-          <span className="player-name">{player.name}</span>
-          <span className="session-code">Session: {session.code}</span>
-        </div>
-      </div>
       <GameBoard />
     </div>
   );

@@ -21,19 +21,10 @@
   margin-bottom: 2.5rem;
 }
 
-.game-title {
-  font-size: 3rem;
-  font-weight: 900;
-  color: #dc2626;
-  margin: 0;
-  letter-spacing: -0.02em;
-  text-shadow: 2px 2px 0 #fca5a5;
-}
-
-.game-subtitle {
-  font-size: 1rem;
-  color: #64748b;
-  margin: 0.5rem 0 0;
+.game-logo {
+  max-width: 100%;
+  height: auto;
+  max-height: 120px;
 }
 
 .join-form {

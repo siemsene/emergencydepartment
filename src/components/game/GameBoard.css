@@ -54,6 +54,28 @@
   gap: 1.5rem;
 }
 
+.header-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.player-name-display {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.session-name-display {
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.header-divider {
+  width: 1px;
+  height: 2rem;
+  background: rgba(255, 255, 255, 0.2);
+}
+
 .hour-display {
   font-size: 1.25rem;
   font-weight: 700;

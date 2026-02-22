@@ -1,40 +1,40 @@
-/**
- * Import function triggers from their respective submodules:
- *
- * import {onCall} from "firebase-functions/v2/https";
- * import {onDocumentWritten} from "firebase-functions/v2/firestore";
- *
- * See a full list of supported triggers at https://firebase.google.com/docs/functions
- */
-
 import {setGlobalOptions} from "firebase-functions";
 import {onSchedule} from "firebase-functions/v2/scheduler";
+import {onCall, HttpsError} from "firebase-functions/v2/https";
+import {defineSecret} from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import * as admin from "firebase-admin";
 
-// Start writing functions
-// https://firebase.google.com/docs/functions/typescript
-
-// For cost control, you can set the maximum number of containers that can be
-// running at the same time. This helps mitigate the impact of unexpected
-// traffic spikes by instead downgrading performance. This limit is a
-// per-function limit. You can override the limit for each function using the
-// `maxInstances` option in the function's options, e.g.
-// `onRequest({ maxInstances: 5 }, (req, res) => { ... })`.
-// NOTE: setGlobalOptions does not apply to functions using the v1 API. V1
-// functions should each use functions.runWith({ maxInstances: 10 }) instead.
-// In the v1 API, each function can only serve one request per container, so
-// this will be the maximum concurrent request count.
 setGlobalOptions({maxInstances: 10});
 
 admin.initializeApp();
 
 const PLAYER_DELETE_BATCH_SIZE = 400;
 
+// Secrets
+const smtp2goApiKey = defineSecret("SMTP2GO_API_KEY");
+const adminEmail = defineSecret("ADMIN_EMAIL");
+const fromEmail = defineSecret("FROM_EMAIL");
+
+/**
+ * HTML-escape a string to prevent injection.
+ * @param {string} str The string to escape.
+ * @return {string} The escaped string.
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 /**
  * Deletes all players linked to the provided session.
- * @param {admin.firestore.Firestore} db Firestore admin instance.
- * @param {string} sessionId Session identifier to clean up.
+ * @param {admin.firestore.Firestore} db Firestore instance.
+ * @param {string} sessionId Session ID to clean up.
+ * @return {Promise<number>} Number of deleted players.
  */
 async function deleteSessionPlayers(
   db: admin.firestore.Firestore,
@@ -98,7 +98,174 @@ export const cleanupExpiredSessions = onSchedule("every 24 hours", async () => {
   });
 });
 
-// export const helloWorld = onRequest((request, response) => {
-//   logger.info("Hello logs!", {structuredData: true});
-//   response.send("Hello from Firebase!");
-// });
+// ---- Email Cloud Function ----
+
+const SMTP2GO_API_URL = "https://api.smtp2go.com/v3/email/send";
+const FROM_NAME = "Emergency! Game";
+
+type EmailAction =
+  | "notifyAdminNewInstructor"
+  | "notifyInstructorApproved"
+  | "notifyInstructorRejected"
+  | "sendPasswordResetEmail";
+
+interface SendEmailData {
+  action: EmailAction;
+  instructorName?: string;
+  instructorEmail?: string;
+  organization?: string;
+  email?: string;
+  resetLink?: string;
+}
+
+export const sendEmail = onCall(
+  {secrets: [smtp2goApiKey, adminEmail, fromEmail]},
+  async (request) => {
+    const data = request.data as SendEmailData;
+
+    if (!data.action) {
+      throw new HttpsError("invalid-argument", "Missing action field");
+    }
+
+    const apiKey = smtp2goApiKey.value();
+    const adminAddr = adminEmail.value();
+    const fromAddr = fromEmail.value() || "noreply@emergencygame.com";
+
+    if (!apiKey) {
+      logger.warn("SMTP2GO API key not configured. Email not sent.");
+      return {success: false, reason: "not_configured"};
+    }
+
+    let to: string;
+    let subject: string;
+    let html: string;
+
+    switch (data.action) {
+    case "notifyAdminNewInstructor": {
+      if (!data.instructorName || !data.instructorEmail) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Missing instructorName or instructorEmail"
+        );
+      }
+      if (!adminAddr) {
+        return {success: false, reason: "admin_email_not_configured"};
+      }
+      const safeName = escapeHtml(data.instructorName);
+      const safeEmail = escapeHtml(data.instructorEmail);
+      const safeOrg = data.organization ?
+        escapeHtml(data.organization) : "";
+
+      to = adminAddr;
+      subject = "New Instructor Registration - Emergency! Game";
+      html = `
+          <h2>New Instructor Registration</h2>
+          <p>A new instructor has registered and is awaiting approval:</p>
+          <ul>
+            <li><strong>Name:</strong> ${safeName}</li>
+            <li><strong>Email:</strong> ${safeEmail}</li>
+            ${safeOrg ?
+    `<li><strong>Organization:</strong> ${safeOrg}</li>` : ""}
+          </ul>
+          <p>Please log in to the admin dashboard to approve or reject
+          this request.</p>
+        `;
+      break;
+    }
+    case "notifyInstructorApproved": {
+      if (!data.instructorEmail || !data.instructorName) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Missing instructorEmail or instructorName"
+        );
+      }
+      const safeName = escapeHtml(data.instructorName);
+      to = data.instructorEmail;
+      subject =
+          "Your Instructor Account Has Been Approved - Emergency! Game";
+      html = `
+          <h2>Account Approved!</h2>
+          <p>Hello ${safeName},</p>
+          <p>Your instructor account for the Emergency! Game has been
+          approved. You can now log in and create game sessions.</p>
+          <p>Thank you for using Emergency! Game for your educational
+          needs.</p>
+        `;
+      break;
+    }
+    case "notifyInstructorRejected": {
+      if (!data.instructorEmail || !data.instructorName) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Missing instructorEmail or instructorName"
+        );
+      }
+      const safeName = escapeHtml(data.instructorName);
+      to = data.instructorEmail;
+      subject = "Instructor Account Status - Emergency! Game";
+      html = `
+          <h2>Account Status Update</h2>
+          <p>Hello ${safeName},</p>
+          <p>Unfortunately, your instructor account request has not been
+          approved at this time.</p>
+          <p>If you believe this is an error, please contact the
+          administrator.</p>
+        `;
+      break;
+    }
+    case "sendPasswordResetEmail": {
+      if (!data.email || !data.resetLink) {
+        throw new HttpsError(
+          "invalid-argument",
+          "Missing email or resetLink"
+        );
+      }
+      to = data.email;
+      subject = "Password Reset - Emergency! Game";
+      const safeLink = escapeHtml(data.resetLink);
+      html = `
+          <h2>Password Reset Request</h2>
+          <p>You have requested to reset your password for the
+          Emergency! Game.</p>
+          <p>Click the link below to reset your password:</p>
+          <p><a href="${safeLink}">${safeLink}</a></p>
+          <p>If you did not request this, please ignore this email.</p>
+          <p>This link will expire in 1 hour.</p>
+        `;
+      break;
+    }
+    default:
+      throw new HttpsError(
+        "invalid-argument",
+        `Unknown action: ${data.action}`
+      );
+    }
+
+    try {
+      const response = await fetch(SMTP2GO_API_URL, {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          api_key: apiKey,
+          to: [to],
+          sender: `${FROM_NAME} <${fromAddr}>`,
+          subject,
+          html_body: html,
+          text_body: html.replace(/<[^>]*>/g, ""),
+        }),
+      });
+
+      const result = await response.json();
+      const succeeded = result.data?.succeeded > 0;
+
+      if (!succeeded) {
+        logger.warn("Email send failed", {action: data.action, result});
+      }
+
+      return {success: succeeded};
+    } catch (error) {
+      logger.error("Failed to send email:", error);
+      return {success: false, reason: "send_error"};
+    }
+  }
+);

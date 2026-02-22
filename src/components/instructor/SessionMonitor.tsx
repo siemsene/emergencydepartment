@@ -9,6 +9,7 @@ import {
   advanceSessionToSequencing,
   advanceSessionHour,
   endSessionEarly,
+  nudgePlayer,
   kickPlayer,
   updatePlayerGameState,
   updatePlayerGameStateFields
@@ -66,6 +67,13 @@ export function SessionMonitor() {
       lastHourChangeAtRef.current = Date.now();
     }
   }, [session]);
+
+  // Automatically navigate to results when session completes
+  useEffect(() => {
+    if (session?.status === 'completed' && sessionId) {
+      navigate(`/instructor/session/${sessionId}/results`);
+    }
+  }, [session?.status, sessionId, navigate]);
 
   const allPlayersReady = useCallback(() => {
     if (players.length === 0) return false;
@@ -132,9 +140,8 @@ export function SessionMonitor() {
     }
   };
 
-  const handleNudgePlayer = (playerId: string) => {
-    // In a real implementation, this would send a real-time notification
-    // For now, we'll just show a local indicator
+  const handleNudgePlayer = async (playerId: string) => {
+    await nudgePlayer(playerId);
     setNudgePlayerId(playerId);
     setTimeout(() => setNudgePlayerId(null), 3000);
   };
@@ -143,13 +150,23 @@ export function SessionMonitor() {
     const player = players.find(p => p.id === playerId);
     if (!player || !session) return;
 
-    // Force end the decision by setting all required completion fields
-    await updatePlayerGameStateFields(playerId, {
-      currentPhase: 'waiting',
-      hourComplete: true,
-      lastCompletedHour: session.currentHour,
-      lastTreatmentHour: session.currentHour
-    });
+    if (session.status === 'staffing') {
+      // Force complete staffing: preserve their current room choices
+      await updatePlayerGameStateFields(playerId, {
+        staffingComplete: true,
+        totalCost: player.gameState.staffingCost,
+        hourComplete: true
+      });
+    } else {
+      // Force complete the current game hour regardless of phase
+      await updatePlayerGameStateFields(playerId, {
+        currentPhase: 'waiting',
+        hourComplete: true,
+        lastCompletedHour: session.currentHour,
+        lastTreatmentHour: session.currentHour,
+        lastSequencingHour: session.currentHour
+      });
+    }
   };
 
   useEffect(() => {
@@ -444,6 +461,7 @@ export function SessionMonitor() {
             </div>
           </div>
         )}
+
       </div>
 
       {/* Kick Confirmation Modal */}

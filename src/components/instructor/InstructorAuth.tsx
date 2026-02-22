@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../contexts/AuthContext';
 import { Input } from '../shared/Input';
 import { Button } from '../shared/Button';
+import { validateOrganization } from '../../utils/validation';
 import './InstructorAuth.css';
 
 type AuthMode = 'login' | 'register' | 'forgot';
@@ -49,6 +50,14 @@ export function InstructorAuth() {
     if (password.length < 6) {
       setError('Password must be at least 6 characters');
       return;
+    }
+
+    if (organization) {
+      const orgError = validateOrganization(organization);
+      if (orgError) {
+        setError(orgError);
+        return;
+      }
     }
 
     setIsLoading(true);

@@ -49,6 +49,8 @@ interface GameContextType {
   resetGame: () => Promise<void>;
   // State sync
   syncGameState: () => Promise<void>;
+  // Nudge
+  nudged: boolean;
 }
 
 const GameContext = createContext<GameContextType | undefined>(undefined);
@@ -58,14 +60,18 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const [player, setPlayer] = useState<Player | null>(null);
   const [gameState, setGameState] = useState<PlayerGameState | null>(null);
   const [isInstructor, setIsInstructor] = useState(false);
+  const [nudged, setNudged] = useState(false);
+  const lastNudgedAtRef = useRef<number>(0);
 
-  // Ref to track the hour for which we've processed arrivals locally
-  // This prevents the Firebase subscription from overwriting our state during hour transitions
-  const processedArrivalsHourRef = useRef<number>(0);
+  // Version counter ref tracks the latest local version to reject stale Firebase updates
+  const localVersionRef = useRef<number>(0);
 
-  // Timestamp-based lock to completely block subscription updates after local state changes
-  // This prevents race conditions where Firebase subscription fires before React processes local updates
-  const localUpdateLockUntilRef = useRef<number>(0);
+  // Bump version on every local state change so Firebase subscription ignores stale echoes
+  const withVersion = useCallback((state: PlayerGameState): PlayerGameState => {
+    const newVersion = (state.stateVersion ?? 0) + 1;
+    localVersionRef.current = newVersion;
+    return { ...state, stateVersion: newVersion };
+  }, []);
 
   // Subscribe to session updates
   useEffect(() => {
@@ -88,51 +94,28 @@ export function GameProvider({ children }: { children: ReactNode }) {
 
     const unsubscribe = subscribeToPlayer(player.id, (updatedPlayer) => {
       if (updatedPlayer) {
+        // Detect nudge
+        const incomingNudge = updatedPlayer.nudgedAt ?? 0;
+        if (incomingNudge > lastNudgedAtRef.current) {
+          lastNudgedAtRef.current = incomingNudge;
+          setNudged(true);
+          setTimeout(() => setNudged(false), 5000);
+        }
+
         setPlayer(updatedPlayer);
         // Use functional update to compare incoming state with current state
         setGameState(prevState => {
           if (!prevState) return updatedPlayer.gameState;
 
-          // CRITICAL: If we're within the lock period after a local update,
-          // completely ignore Firebase updates to prevent race conditions
-          if (Date.now() < localUpdateLockUntilRef.current) {
+          const incomingVersion = updatedPlayer.gameState.stateVersion ?? 0;
+
+          // Reject Firebase updates that are older than our local version
+          if (incomingVersion < localVersionRef.current) {
             return prevState;
           }
 
-          const incomingLastArrivals = updatedPlayer.gameState.lastArrivalsHour ?? 0;
-          const currentLastArrivals = prevState.lastArrivalsHour ?? 0;
-
-          // If we've locally processed arrivals for a higher hour than
-          // what Firebase is sending, reject the Firebase update entirely.
-          if (processedArrivalsHourRef.current > incomingLastArrivals) {
-            return prevState;
-          }
-
-          // Also reject if incoming state has processed fewer arrivals than current local state
-          if (incomingLastArrivals < currentLastArrivals) {
-            return prevState;
-          }
-
-          // If same arrivals hour, check if incoming would regress the phase
-          if (incomingLastArrivals === currentLastArrivals) {
-            // Define phase ordering: sequencing comes after waiting/arriving
-            const phaseOrder: Record<string, number> = {
-              'waiting': 0,
-              'arriving': 1,
-              'sequencing': 2,
-              'rolling': 3,
-              'treating': 4,
-              'review': 5
-            };
-            const incomingPhaseOrder = phaseOrder[updatedPlayer.gameState.currentPhase] ?? 0;
-            const currentPhaseOrder = phaseOrder[prevState.currentPhase] ?? 0;
-
-            // Don't regress to an earlier phase within the same hour
-            if (incomingPhaseOrder < currentPhaseOrder) {
-              return prevState;
-            }
-          }
-
+          // Accept the incoming state and sync our local version tracker
+          localVersionRef.current = incomingVersion;
           return updatedPlayer.gameState;
         });
       }
@@ -188,7 +171,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
         });
 
         if (allReady) {
-          console.log('All players ready, advancing session to hour', currentSession.currentHour + 1);
+          if (import.meta.env.DEV) console.log('All players ready, advancing session to hour', currentSession.currentHour + 1);
           await advanceSessionHour(session.id, currentSession.currentHour + 1);
         }
       } catch (error) {
@@ -267,29 +250,29 @@ export function GameProvider({ children }: { children: ReactNode }) {
   const completeStaffing = useCallback(async () => {
     if (!gameState || !player?.id) return;
 
-    const newState = {
+    const newState = withVersion({
       ...gameState,
       staffingComplete: true,
       totalCost: gameState.staffingCost,
       hourComplete: true
-    };
+    });
 
     setGameState(newState);
     await updatePlayerGameState(player.id, newState);
-  }, [gameState, player?.id, session?.currentHour]);
+  }, [gameState, player?.id, session?.currentHour, withVersion]);
 
   const completeTurn = useCallback(async () => {
     if (!gameState || !player?.id) return;
 
-    const newState = {
+    const newState = withVersion({
       ...gameState,
       currentPhase: 'waiting' as const,
       hourComplete: true
-    };
+    });
 
     setGameState(newState);
     await updatePlayerGameState(player.id, newState);
-  }, [gameState, player?.id]);
+  }, [gameState, player?.id, withVersion]);
 
   const resetGame = useCallback(async () => {
     if (!player || !session?.id) return;
@@ -385,22 +368,18 @@ export function GameProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    // CRITICAL: Set locks BEFORE updating state to prevent Firebase subscription
-    // from overwriting our state with stale data during the transition
-    processedArrivalsHourRef.current = currentHour;
-    // Lock subscription updates for 2 seconds to ensure React processes our update first
-    localUpdateLockUntilRef.current = Date.now() + 2000;
+    const versionedState = withVersion(newState);
 
     // Use flushSync to force React to immediately apply the state update
     // This ensures the state is updated BEFORE the Firebase write triggers onSnapshot
     flushSync(() => {
-      setGameState(newState);
+      setGameState(versionedState);
     });
 
     if (player?.id) {
-      updatePlayerGameState(player.id, newState);
+      updatePlayerGameState(player.id, versionedState);
     }
-  }, [gameState, session, player?.id]);
+  }, [gameState, session, player?.id, withVersion]);
 
   const movePatientToRoom = useCallback((patientId: string, roomId: string) => {
     if (!gameState || !session) return;
@@ -475,35 +454,27 @@ export function GameProvider({ children }: { children: ReactNode }) {
     // Only allow completing sequencing if we're actually in the sequencing phase
     if (gameState.currentPhase !== 'sequencing') return;
 
-    // CRITICAL: Lock Firebase subscription updates BEFORE changing state
-    // This prevents race conditions during the rolling/animation phase
-    // Lock for 10 seconds to cover the entire sequence
-    localUpdateLockUntilRef.current = Date.now() + 10000;
-
-    const newState = {
+    const newState = withVersion({
       ...gameState,
       currentPhase: 'rolling' as const,
       lastSequencingHour: session?.currentHour ?? gameState.lastArrivalsHour ?? 0
-    };
+    });
 
     setGameState(newState);
     await updatePlayerGameState(player.id, newState);
-  }, [gameState, player?.id, session?.currentHour]);
+  }, [gameState, player?.id, session?.currentHour, withVersion]);
 
   // Phase 1: Roll dice for risk events (doesn't remove patients yet)
   const rollForRiskEvents = useCallback(() => {
     if (!gameState || !session) return [];
 
-    // CRITICAL: Lock Firebase subscription updates during the entire rolling/animation phase
-    // This prevents stale Firebase data from overwriting our local state
-    // Lock for 8 seconds to cover: 3s animation + 2.5s delay + 2s buffer
-    localUpdateLockUntilRef.current = Date.now() + 8000;
-
     const params = session.parameters || DEFAULT_PARAMETERS;
     const results: { patientId: string; roll: number; isEvent: boolean; type: PatientType }[] = [];
 
-    console.log('[RiskEvents] Rolling for', gameState.waitingRoom.length, 'patients');
-    console.log('[RiskEvents] Risk event rolls config:', params.riskEventRolls);
+    if (import.meta.env.DEV) {
+      console.log('[RiskEvents] Rolling for', gameState.waitingRoom.length, 'patients');
+      console.log('[RiskEvents] Risk event rolls config:', params.riskEventRolls);
+    }
 
     // Roll for each waiting patient
     const expandRiskRolls = (baseRolls: number[], waitingTime: number) => {
@@ -526,13 +497,15 @@ export function GameProvider({ children }: { children: ReactNode }) {
         : baseRiskRolls;
       const isEvent = riskRolls.includes(roll);
 
-      console.log(`[RiskEvents] Patient ${patient.type}: rolled ${roll}, riskRolls=${JSON.stringify(riskRolls)}, isEvent=${isEvent}`);
+      if (import.meta.env.DEV) console.log(`[RiskEvents] Patient ${patient.type}: rolled ${roll}, riskRolls=${JSON.stringify(riskRolls)}, isEvent=${isEvent}`);
 
       results.push({ patientId: patient.id, roll, isEvent, type: patient.type });
     }
 
-    const riskEventCount = results.filter(r => r.isEvent).length;
-    console.log('[RiskEvents] Total risk events:', riskEventCount);
+    if (import.meta.env.DEV) {
+      const riskEventCount = results.filter(r => r.isEvent).length;
+      console.log('[RiskEvents] Total risk events:', riskEventCount);
+    }
 
     return results;
   }, [gameState, session]);
@@ -542,14 +515,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
     results: { patientId: string; roll: number; isEvent: boolean; type: PatientType }[]
   ) => {
     if (!gameState || !session) {
-      console.warn('[ApplyRisk] No gameState or session!');
+      if (import.meta.env.DEV) console.warn('[ApplyRisk] No gameState or session!');
       return [];
     }
 
-    console.log('[ApplyRisk] Applying results for', results.length, 'patients');
-    console.log('[ApplyRisk] Results with isEvent=true:', results.filter(r => r.isEvent));
-    console.log('[ApplyRisk] Current waiting room size:', gameState.waitingRoom.length);
-    console.log('[ApplyRisk] Waiting room patient IDs:', gameState.waitingRoom.map(p => ({ id: p.id, type: p.type })));
+    if (import.meta.env.DEV) {
+      console.log('[ApplyRisk] Applying results for', results.length, 'patients');
+      console.log('[ApplyRisk] Results with isEvent=true:', results.filter(r => r.isEvent));
+      console.log('[ApplyRisk] Current waiting room size:', gameState.waitingRoom.length);
+      console.log('[ApplyRisk] Waiting room patient IDs:', gameState.waitingRoom.map(p => ({ id: p.id, type: p.type })));
+    }
 
     const params = session.parameters || DEFAULT_PARAMETERS;
     const newRiskEvents: { patientId: string; type: PatientType; outcome: 'cardiac_arrest' | 'lwbs' }[] = [];
@@ -560,29 +535,31 @@ export function GameProvider({ children }: { children: ReactNode }) {
     // Process risk events based on results
     for (const result of results) {
       if (result.isEvent) {
-        console.log('[ApplyRisk] Processing risk event for patient:', result.patientId, 'type:', result.type, 'roll:', result.roll);
+        if (import.meta.env.DEV) console.log('[ApplyRisk] Processing risk event for patient:', result.patientId, 'type:', result.type, 'roll:', result.roll);
 
         const patient = newWaitingRoom.find(p => p.id === result.patientId);
         if (!patient) {
-          console.warn('[ApplyRisk] Patient NOT FOUND in waiting room:', result.patientId, result.type);
-          console.warn('[ApplyRisk] Available patient IDs:', newWaitingRoom.map(p => p.id));
+          if (import.meta.env.DEV) {
+            console.warn('[ApplyRisk] Patient NOT FOUND in waiting room:', result.patientId, result.type);
+            console.warn('[ApplyRisk] Available patient IDs:', newWaitingRoom.map(p => p.id));
+          }
           continue;
         }
 
-        console.log('[ApplyRisk] Found patient:', patient.id, 'type:', patient.type);
+        if (import.meta.env.DEV) console.log('[ApplyRisk] Found patient:', patient.id, 'type:', patient.type);
 
         // Use patient.type for consistency (should match result.type)
         const patientType = patient.type;
 
         if (patientType === 'A') {
           // Cardiac arrest
-          console.log('[ApplyRisk] Processing Type A cardiac arrest');
+          if (import.meta.env.DEV) console.log('[ApplyRisk] Processing Type A cardiac arrest');
           newStats.cardiacArrests++;
           additionalCosts += params.riskEventCost.A;
           newRiskEvents.push({ patientId: result.patientId, type: patientType, outcome: 'cardiac_arrest' });
         } else {
           // LWBS (Left Without Being Seen)
-          console.log('[ApplyRisk] Processing Type', patientType, 'LWBS');
+          if (import.meta.env.DEV) console.log('[ApplyRisk] Processing Type', patientType, 'LWBS');
           if (patientType === 'B') {
             newStats.lwbs.B++;
             additionalCosts += params.riskEventCost.B;
@@ -594,12 +571,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
         }
         newStats.riskEventCosts += params.riskEventCost[patientType];
         newWaitingRoom = newWaitingRoom.filter(p => p.id !== result.patientId);
-        console.log('[ApplyRisk] Removed patient, new waiting room size:', newWaitingRoom.length);
+        if (import.meta.env.DEV) console.log('[ApplyRisk] Removed patient, new waiting room size:', newWaitingRoom.length);
       }
     }
 
-    console.log('[ApplyRisk] Final newRiskEvents:', newRiskEvents);
-    console.log('[ApplyRisk] Final newWaitingRoom size:', newWaitingRoom.length);
+    if (import.meta.env.DEV) {
+      console.log('[ApplyRisk] Final newRiskEvents:', newRiskEvents);
+      console.log('[ApplyRisk] Final newWaitingRoom size:', newWaitingRoom.length);
+    }
 
     // Increment waiting time for remaining patients
     newWaitingRoom = newWaitingRoom.map(p => ({
@@ -634,17 +613,20 @@ export function GameProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    console.log('[ApplyRisk] Setting new state with turnEvents.riskEvents:', newState.turnEvents.riskEvents);
-    console.log('[ApplyRisk] New state cardiacArrests:', newState.stats.cardiacArrests);
+    if (import.meta.env.DEV) {
+      console.log('[ApplyRisk] Setting new state with turnEvents.riskEvents:', newState.turnEvents.riskEvents);
+      console.log('[ApplyRisk] New state cardiacArrests:', newState.stats.cardiacArrests);
+    }
 
-    setGameState(newState);
+    const versionedState = withVersion(newState);
+    setGameState(versionedState);
     if (player?.id) {
-      await updatePlayerGameState(player.id, newState);
+      await updatePlayerGameState(player.id, versionedState);
     }
 
     // Return the risk events so they can be passed to processTreatment
     return newRiskEvents;
-  }, [gameState, session, player?.id]);
+  }, [gameState, session, player?.id, withVersion]);
 
   // Legacy function for compatibility - just rolls, doesn't apply
   const processRiskEvents = useCallback(async () => {
@@ -661,18 +643,19 @@ export function GameProvider({ children }: { children: ReactNode }) {
     if (lastTreatmentHour >= treatmentHour) {
       // Already processed, but ensure we're in waiting state
       if (gameState.currentPhase !== 'waiting' || !gameState.hourComplete) {
-        const fixState = {
+        const fixState = withVersion({
           ...gameState,
           currentPhase: 'waiting' as const,
           hourComplete: true,
           lastCompletedHour: treatmentHour
-        };
+        });
         setGameState(fixState);
         if (player?.id) {
           await updatePlayerGameStateFields(player.id, {
             currentPhase: 'waiting',
             hourComplete: true,
-            lastCompletedHour: treatmentHour
+            lastCompletedHour: treatmentHour,
+            stateVersion: fixState.stateVersion
           });
         }
       }
@@ -680,8 +663,14 @@ export function GameProvider({ children }: { children: ReactNode }) {
     }
 
     const params = session.parameters || DEFAULT_PARAMETERS;
+    // Record utilization BEFORE treatment (after sequencing/allocation)
+    const preTreatmentUtilization = calculateUtilization(gameState.rooms);
+
     let newRooms = [...gameState.rooms];
-    let newCompletedPatients = [...gameState.completedPatients];
+    // Cap at 200 entries to prevent unbounded growth (24-hour game produces ~70 max)
+    let newCompletedPatients = gameState.completedPatients.length > 200
+      ? gameState.completedPatients.slice(-200)
+      : [...gameState.completedPatients];
     let newCompletedList: { patientId: string; type: PatientType }[] = [];
     let newStats = { ...gameState.stats };
     let additionalRevenue = 0;
@@ -730,9 +719,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
       };
     });
 
-    // Record hourly stats
-    const utilization = calculateUtilization(newRooms);
-    newStats.hourlyUtilization.push(utilization);
+    // Record hourly stats (utilization measured after allocation, before treatment)
+    newStats.hourlyUtilization.push(preTreatmentUtilization);
     newStats.hourlyQueueLength.push(gameState.waitingRoom.length);
 
     const newState: PlayerGameState = {
@@ -753,15 +741,16 @@ export function GameProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    setGameState(newState);
+    const versionedState = withVersion(newState);
+    setGameState(versionedState);
     if (player?.id) {
       try {
-        await updatePlayerGameState(player.id, newState);
+        await updatePlayerGameState(player.id, versionedState);
       } catch (error) {
         console.error('Error writing treatment state to Firebase:', error);
       }
     }
-  }, [gameState, session, player?.id]);
+  }, [gameState, session, player?.id, withVersion]);
 
   return (
     <GameContext.Provider
@@ -786,7 +775,8 @@ export function GameProvider({ children }: { children: ReactNode }) {
         processTreatment,
         completeTurn,
         resetGame,
-        syncGameState
+        syncGameState,
+        nudged
       }}
     >
       {children}

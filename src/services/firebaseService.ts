@@ -13,6 +13,8 @@ import {
   Timestamp,
   serverTimestamp,
   writeBatch,
+  arrayUnion,
+  runTransaction,
   limit
 } from 'firebase/firestore';
 import {
@@ -134,13 +136,12 @@ export async function createSession(
   parameters: GameParameters = DEFAULT_PARAMETERS
 ): Promise<Session> {
   const sessionId = doc(collection(db, 'sessions')).id;
-  let code = generateSessionCode();
+  let code: string;
 
-  // Ensure unique code
-  const existingSession = await getSessionByCode(code);
-  while (existingSession) {
+  // Ensure unique code with proper re-query inside loop
+  do {
     code = generateSessionCode();
-  }
+  } while (await getSessionByCode(code));
 
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + 30);
@@ -255,17 +256,31 @@ export async function advanceSessionToSequencing(sessionId: string) {
 }
 
 export async function advanceSessionHour(sessionId: string, newHour: number) {
-  if (newHour > 24) {
-    await updateDoc(doc(db, 'sessions', sessionId), {
-      status: 'completed',
-      currentHour: 24,
-      endedAt: serverTimestamp()
-    });
-  } else {
-    await updateDoc(doc(db, 'sessions', sessionId), {
-      currentHour: newHour
-    });
-  }
+  const sessionRef = doc(db, 'sessions', sessionId);
+
+  await runTransaction(db, async (transaction) => {
+    const sessionSnap = await transaction.get(sessionRef);
+    if (!sessionSnap.exists()) return;
+
+    const currentHour = sessionSnap.data().currentHour ?? 0;
+
+    // Only advance if newHour is exactly currentHour + 1 (prevents double-advances)
+    if (newHour !== currentHour + 1 && newHour <= 24) return;
+    // Also allow completing (newHour > 24) only from hour 24
+    if (newHour > 24 && currentHour !== 24) return;
+
+    if (newHour > 24) {
+      transaction.update(sessionRef, {
+        status: 'completed',
+        currentHour: 24,
+        endedAt: serverTimestamp()
+      });
+    } else {
+      transaction.update(sessionRef, {
+        currentHour: newHour
+      });
+    }
+  });
 }
 
 export async function endSessionEarly(sessionId: string) {
@@ -334,6 +349,10 @@ export async function joinSession(sessionCode: string, playerName: string): Prom
   // Block new joins only if the session has ended or is expired
   if (session.status === 'completed' || new Date() > session.expiresAt) return null;
 
+  // Enforce player cap (default 100)
+  const maxPlayers = 100;
+  if (session.players.length >= maxPlayers) return null;
+
   // Create new player
   const playerId = doc(collection(db, 'players')).id;
   const player: Player = {
@@ -346,16 +365,17 @@ export async function joinSession(sessionCode: string, playerName: string): Prom
     gameState: initializePlayerGameState()
   };
 
-  await setDoc(doc(db, 'players', playerId), {
+  // Atomic: create player doc and update session's players array in one batch
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'players', playerId), {
     ...player,
     joinedAt: serverTimestamp(),
     lastSeen: serverTimestamp()
   });
-
-  // Add player to session
-  await updateDoc(doc(db, 'sessions', session.id), {
-    players: [...session.players, playerId]
+  batch.update(doc(db, 'sessions', session.id), {
+    players: arrayUnion(playerId)
   });
+  await batch.commit();
 
   return player;
 }
@@ -439,6 +459,12 @@ export async function updatePlayerConnection(playerId: string, isConnected: bool
   });
 }
 
+export async function nudgePlayer(playerId: string) {
+  await updateDoc(doc(db, 'players', playerId), {
+    nudgedAt: Date.now()
+  });
+}
+
 export async function kickPlayer(playerId: string) {
   const player = await getPlayer(playerId);
   if (player) {
@@ -472,7 +498,9 @@ export function subscribeToPlayer(playerId: string, callback: (player: Player | 
 
 export function subscribeToSessionPlayers(sessionId: string, callback: (players: Player[]) => void) {
   const q = query(collection(db, 'players'), where('sessionId', '==', sessionId));
-  return onSnapshot(q, (querySnapshot) => {
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const unsubscribe = onSnapshot(q, (querySnapshot) => {
     const players = querySnapshot.docs.map(doc => {
       const data = doc.data();
       return {
@@ -482,8 +510,15 @@ export function subscribeToSessionPlayers(sessionId: string, callback: (players:
         lastSeen: data.lastSeen?.toDate() || new Date()
       } as Player;
     });
-    callback(players);
+
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => callback(players), 300);
   });
+
+  return () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    unsubscribe();
+  };
 }
 
 // Admin check (simple check by email)

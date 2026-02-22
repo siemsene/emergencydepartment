@@ -4,7 +4,10 @@
       "Bash(npm create vite:*)",
       "Bash(npm install:*)",
       "Bash(npm run build:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(xargs cat:*)",
+      "Bash(git -C /c/Users/siems/games/emergencydepartment log --all --full-history --oneline -- .env)",
+      "Bash(xargs:*)"
     ]
   }
 }

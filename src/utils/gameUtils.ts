@@ -91,12 +91,13 @@ export function calculateArrivalsTotals(arrivals: HourlyArrivals[]): { A: number
   return { ...totals, total: totals.A + totals.B + totals.C };
 }
 
-// Generate session code (6 characters)
+// Generate session code (6 characters) using cryptographic randomness
 export function generateSessionCode(): string {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Exclude confusing characters
+  const randomValues = crypto.getRandomValues(new Uint8Array(6));
   let code = '';
   for (let i = 0; i < 6; i++) {
-    code += chars.charAt(Math.floor(Math.random() * chars.length));
+    code += chars.charAt(randomValues[i] % chars.length);
   }
   return code;
 }
@@ -175,6 +176,7 @@ export function initializePlayerGameState(): PlayerGameState {
     lastArrivalsHour: 0,
     lastTreatmentHour: 0,
     lastSequencingHour: 0,
+    stateVersion: 0,
     stats: initializePlayerStats(),
     turnEvents: {
       arrived: { A: 0, B: 0, C: 0 },

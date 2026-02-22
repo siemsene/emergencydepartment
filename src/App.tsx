@@ -19,6 +19,9 @@ import { AdminDashboard } from './components/admin/AdminDashboard';
 // Analytics Components
 import { GameResults } from './components/analytics/GameResults';
 
+// Shared Components
+import { ErrorBoundary } from './components/shared/ErrorBoundary';
+
 import './App.css';
 
 // Protected Route for Instructors
@@ -111,13 +114,15 @@ function AppRoutes() {
 
 function App() {
   return (
-    <Router>
-      <AuthProvider>
-        <GameProvider>
-          <AppRoutes />
-        </GameProvider>
-      </AuthProvider>
-    </Router>
+    <ErrorBoundary>
+      <Router>
+        <AuthProvider>
+          <GameProvider>
+            <AppRoutes />
+          </GameProvider>
+        </AuthProvider>
+      </Router>
+    </ErrorBoundary>
   );
 }
 

@@ -26,6 +26,7 @@ export interface Player {
   joinedAt: Date;
   isConnected: boolean;
   lastSeen: Date;
+  nudgedAt?: number;
   gameState: PlayerGameState;
 }
 
@@ -106,6 +107,7 @@ export interface PlayerGameState {
   lastArrivalsHour: number; // Track which hour arrivals were last processed
   lastTreatmentHour: number; // Track which hour treatment was last processed
   lastSequencingHour: number; // Track which hour sequencing was submitted
+  stateVersion: number; // Monotonically increasing counter for optimistic concurrency
   stats: PlayerStats;
   turnEvents: TurnEvents;
 }
@@ -157,6 +159,8 @@ export interface PlayerResult {
   mismatchPercentage: number;
   maxWaitingTime: { A: number; B: number; C: number };
   patientsTreated: { A: number; B: number; C: number };
+  staffingCost: number;
+  waitingCosts: number;
 }
 
 export interface SessionResults {

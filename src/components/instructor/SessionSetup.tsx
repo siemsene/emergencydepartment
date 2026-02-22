@@ -135,7 +135,7 @@ export function SessionSetup() {
   };
 
   const handleStartSession = async () => {
-    if (!sessionId) return;
+    if (!sessionId || hasRevenueErrors || hasWaitCostErrors || hasRiskCostErrors || budgetError) return;
 
     await handleSaveParameters();
     await startSession(sessionId);
@@ -154,6 +154,50 @@ export function SessionSetup() {
       setKickPlayerId(null);
     }
   };
+
+  const revenueErrors = (() => {
+    const { A, B, C } = parameters.revenuePerPatient;
+    const errors: { A?: string; B?: string; C?: string } = {};
+    if (A > 10000) errors.A = 'Max 10,000';
+    if (B > 10000) errors.B = 'Max 10,000';
+    if (C > 10000) errors.C = 'Max 10,000';
+    if (A <= B) errors.A = errors.A || 'Must be greater than Type B';
+    if (B <= C) errors.B = errors.B || 'Must be greater than Type C';
+    if (B >= A) errors.B = errors.B || 'Must be less than Type A';
+    if (C >= B) errors.C = errors.C || 'Must be less than Type B';
+    return errors;
+  })();
+  const hasRevenueErrors = Object.keys(revenueErrors).length > 0;
+
+  const waitCostErrors = (() => {
+    const { A, B, C } = parameters.waitingCostPerHour;
+    const errors: { A?: string; B?: string; C?: string } = {};
+    if (A > 1000) errors.A = 'Max 1,000';
+    if (B > 1000) errors.B = 'Max 1,000';
+    if (C > 1000) errors.C = 'Max 1,000';
+    if (A <= B) errors.A = errors.A || 'Must be greater than Type B';
+    if (B <= C) errors.B = errors.B || 'Must be greater than Type C';
+    if (B >= A) errors.B = errors.B || 'Must be less than Type A';
+    if (C >= B) errors.C = errors.C || 'Must be less than Type B';
+    return errors;
+  })();
+  const hasWaitCostErrors = Object.keys(waitCostErrors).length > 0;
+
+  const riskCostErrors = (() => {
+    const { A, B, C } = parameters.riskEventCost;
+    const errors: { A?: string; B?: string; C?: string } = {};
+    if (A > 20000) errors.A = 'Max 20,000';
+    if (B > 20000) errors.B = 'Max 20,000';
+    if (C > 20000) errors.C = 'Max 20,000';
+    if (A <= B) errors.A = errors.A || 'Must be greater than Type B';
+    if (B <= C) errors.B = errors.B || 'Must be greater than Type C';
+    if (B >= A) errors.B = errors.B || 'Must be less than Type A';
+    if (C >= B) errors.C = errors.C || 'Must be less than Type B';
+    return errors;
+  })();
+  const hasRiskCostErrors = Object.keys(riskCostErrors).length > 0;
+
+  const budgetError = parameters.maxStaffingBudget > 100000 ? 'Max 100,000' : undefined;
 
   const totals = calculateArrivalsTotals(arrivals);
 
@@ -225,18 +269,21 @@ export function SessionSetup() {
                   type="number"
                   value={parameters.revenuePerPatient.A}
                   onChange={(e) => handleParameterChange('revenuePerPatient', Number(e.target.value), 'A')}
+                  error={revenueErrors.A}
                 />
                 <Input
                   label="Type B"
                   type="number"
                   value={parameters.revenuePerPatient.B}
                   onChange={(e) => handleParameterChange('revenuePerPatient', Number(e.target.value), 'B')}
+                  error={revenueErrors.B}
                 />
                 <Input
                   label="Type C"
                   type="number"
                   value={parameters.revenuePerPatient.C}
                   onChange={(e) => handleParameterChange('revenuePerPatient', Number(e.target.value), 'C')}
+                  error={revenueErrors.C}
                 />
               </div>
             </div>
@@ -249,18 +296,21 @@ export function SessionSetup() {
                   type="number"
                   value={parameters.waitingCostPerHour.A}
                   onChange={(e) => handleParameterChange('waitingCostPerHour', Number(e.target.value), 'A')}
+                  error={waitCostErrors.A}
                 />
                 <Input
                   label="Type B"
                   type="number"
                   value={parameters.waitingCostPerHour.B}
                   onChange={(e) => handleParameterChange('waitingCostPerHour', Number(e.target.value), 'B')}
+                  error={waitCostErrors.B}
                 />
                 <Input
                   label="Type C"
                   type="number"
                   value={parameters.waitingCostPerHour.C}
                   onChange={(e) => handleParameterChange('waitingCostPerHour', Number(e.target.value), 'C')}
+                  error={waitCostErrors.C}
                 />
               </div>
             </div>
@@ -273,18 +323,21 @@ export function SessionSetup() {
                   type="number"
                   value={parameters.riskEventCost.A}
                   onChange={(e) => handleParameterChange('riskEventCost', Number(e.target.value), 'A')}
+                  error={riskCostErrors.A}
                 />
                 <Input
                   label="Type B"
                   type="number"
                   value={parameters.riskEventCost.B}
                   onChange={(e) => handleParameterChange('riskEventCost', Number(e.target.value), 'B')}
+                  error={riskCostErrors.B}
                 />
                 <Input
                   label="Type C"
                   type="number"
                   value={parameters.riskEventCost.C}
                   onChange={(e) => handleParameterChange('riskEventCost', Number(e.target.value), 'C')}
+                  error={riskCostErrors.C}
                 />
               </div>
             </div>
@@ -303,6 +356,7 @@ export function SessionSetup() {
                   type="number"
                   value={parameters.maxStaffingBudget}
                   onChange={(e) => handleParameterChange('maxStaffingBudget', Number(e.target.value))}
+                  error={budgetError}
                 />
               </div>
               <div className="param-row param-row-full">
@@ -494,7 +548,7 @@ export function SessionSetup() {
         </div>
 
         <div className="setup-actions">
-          <Button variant="success" size="large" onClick={handleStartSession} loading={isSaving}>
+          <Button variant="success" size="large" onClick={handleStartSession} loading={isSaving} disabled={hasRevenueErrors || hasWaitCostErrors || hasRiskCostErrors || !!budgetError}>
             Start Session
           </Button>
         </div>

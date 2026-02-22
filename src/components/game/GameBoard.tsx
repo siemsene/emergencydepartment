@@ -29,7 +29,9 @@ export function GameBoard() {
     processRiskEvents,
     applyRiskEventResults,
     processTreatment,
-    completeTurn
+    completeTurn,
+    nudged,
+    player
   } = useGame();
 
   const [selectedRoom, setSelectedRoom] = useState<RoomType | null>(null);
@@ -39,7 +41,6 @@ export function GameBoard() {
   const [diceResults, setDiceResults] = useState<Map<string, { roll: number; isEvent: boolean }>>(new Map());
   const [isRolling, setIsRolling] = useState(false);
   const [phaseBanner, setPhaseBanner] = useState('');
-  const [showNudge, setShowNudge] = useState(false);
   const [displayedRevenue, setDisplayedRevenue] = useState(0);
   const [displayedCost, setDisplayedCost] = useState(0);
 
@@ -68,6 +69,15 @@ export function GameBoard() {
   const isSequencingPhase = session?.status === 'sequencing';
   const currentHour = session?.currentHour || 0;
   const params = session?.parameters || DEFAULT_PARAMETERS;
+
+  // Clear animation timers when session phase changes (e.g., session ends)
+  useEffect(() => {
+    if (!isSequencingPhase) {
+      if (rollAnimationRef.current) { clearTimeout(rollAnimationRef.current); rollAnimationRef.current = null; }
+      if (treatmentTimeoutRef.current) { clearTimeout(treatmentTimeoutRef.current); treatmentTimeoutRef.current = null; }
+      if (rollingFailsafeRef.current) { clearTimeout(rollingFailsafeRef.current); rollingFailsafeRef.current = null; }
+    }
+  }, [isSequencingPhase]);
 
   // Update phase banner
   useEffect(() => {
@@ -249,8 +259,10 @@ export function GameBoard() {
       results = await processRiskEvents();
       // Store results for applying after animation
       pendingRiskResultsRef.current = results;
-      console.log('[GameBoard] Stored risk results:', results);
-      console.log('[GameBoard] Type A risk events:', results.filter(r => r.type === 'A' && r.isEvent));
+      if (import.meta.env.DEV) {
+        console.log('[GameBoard] Stored risk results:', results);
+        console.log('[GameBoard] Type A risk events:', results.filter(r => r.type === 'A' && r.isEvent));
+      }
     } catch (error) {
       console.error('Error rolling for risk events:', error);
       setIsRolling(false);
@@ -318,8 +330,10 @@ export function GameBoard() {
           try {
             // Apply risk event results (removes patients, updates stats)
             // Keep dice results visible during exit animation
-            console.log('[GameBoard] Calling applyRiskEventResults with:', pendingRiskResultsRef.current);
-            console.log('[GameBoard] Risk events to apply:', pendingRiskResultsRef.current.filter(r => r.isEvent));
+            if (import.meta.env.DEV) {
+              console.log('[GameBoard] Calling applyRiskEventResults with:', pendingRiskResultsRef.current);
+              console.log('[GameBoard] Risk events to apply:', pendingRiskResultsRef.current.filter(r => r.isEvent));
+            }
             const appliedRiskEvents = await applyRiskEventResultsRef.current(pendingRiskResultsRef.current);
 
             // Wait for exit animation to complete (1.5s for risk events) before clearing dice
@@ -487,13 +501,12 @@ export function GameBoard() {
     <div className="game-board">
       {/* Nudge popup */}
       <AnimatePresence>
-        {showNudge && (
+        {nudged && (
           <motion.div
             className="nudge-popup"
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
-            onClick={() => setShowNudge(false)}
           >
             <span>Please make your decision!</span>
           </motion.div>
@@ -503,6 +516,11 @@ export function GameBoard() {
       {/* Game Header (Persistent) */}
       <div className="game-header">
         <div className="header-info">
+          <div className="header-identity">
+            <span className="player-name-display">{player?.name}</span>
+            <span className="session-name-display">{session?.name}</span>
+          </div>
+          <div className="header-divider" />
           <div className="hour-display">
             Hour {currentHour}: {HOURS_OF_DAY[currentHour - 1] || ''}
           </div>
@@ -664,7 +682,7 @@ export function GameBoard() {
         )}
 
         {/* Sequencing Controls */}
-        {(() => {
+        {!isStaffingPhase && (() => {
           const emptyRooms = gameState.rooms.filter(r => !r.isOccupied);
           const hasAssignablePatient = gameState.waitingRoom.some(patient =>
             emptyRooms.some(room => canTreatInRoom(patient.type, room.type))

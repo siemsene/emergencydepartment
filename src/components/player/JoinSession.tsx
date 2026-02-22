@@ -5,6 +5,7 @@ import { Input } from '../shared/Input';
 import { Button } from '../shared/Button';
 import { joinSession } from '../../services/firebaseService';
 import { useGame } from '../../contexts/GameContext';
+import { validatePlayerName, validateSessionCode } from '../../utils/validation';
 import './JoinSession.css';
 
 export function JoinSession() {
@@ -19,13 +20,15 @@ export function JoinSession() {
     e.preventDefault();
     setError('');
 
-    if (!sessionCode.trim()) {
-      setError('Please enter a session code');
+    const codeError = validateSessionCode(sessionCode);
+    if (codeError) {
+      setError(codeError);
       return;
     }
 
-    if (!playerName.trim()) {
-      setError('Please enter your name');
+    const nameError = validatePlayerName(playerName);
+    if (nameError) {
+      setError(nameError);
       return;
     }
 
@@ -63,8 +66,7 @@ export function JoinSession() {
         animate={{ opacity: 1, y: 0 }}
       >
         <div className="logo-section">
-          <h1 className="game-title">EMERGENCY!</h1>
-          <p className="game-subtitle">The ED Simulation Game</p>
+          <img src="/emerg_logo.gif" alt="EMERGENCY! The ED Simulation Game" className="game-logo" />
         </div>
 
         <form onSubmit={handleSubmit} className="join-form">
