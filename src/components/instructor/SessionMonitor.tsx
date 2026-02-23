@@ -448,6 +448,9 @@ export function SessionMonitor() {
                       {player.gameState.waitingRoom.length}
                     </span>
                     <div className="player-actions">
+                      {nudgePlayerId === player.id && (
+                        <span className="nudge-feedback">Player nudged</span>
+                      )}
                       {!isReady && (
                         <>
                           <button

@@ -261,6 +261,16 @@
   color: #d97706;
 }
 
+.nudge-feedback {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #d97706;
+  background: #fef3c7;
+  border-radius: 4px;
+  padding: 0.15rem 0.5rem;
+  white-space: nowrap;
+}
+
 .action-btn.end {
   background: #dbeafe;
   color: #2563eb;

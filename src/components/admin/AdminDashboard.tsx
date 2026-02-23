@@ -6,7 +6,8 @@ import { Instructor } from '../../types';
 import {
   getAllInstructors,
   approveInstructor,
-  removeInstructorAccess
+  removeInstructorAccess,
+  getInstructorSessions
 } from '../../services/firebaseService';
 import { notifyInstructorApproved, notifyInstructorRejected } from '../../services/emailService';
 import { Button } from '../shared/Button';
@@ -18,6 +19,7 @@ export function AdminDashboard() {
   const { user, isAdmin, logout } = useAuth();
 
   const [instructors, setInstructors] = useState<Instructor[]>([]);
+  const [instructorStats, setInstructorStats] = useState<Map<string, number>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [actionInstructorId, setActionInstructorId] = useState<string | null>(null);
   const [actionType, setActionType] = useState<'approve' | 'remove' | null>(null);
@@ -35,11 +37,23 @@ export function AdminDashboard() {
     try {
       const data = await getAllInstructors();
       setInstructors(data);
+      await loadUsageStats(data.filter(i => i.approved));
     } catch (err) {
       console.error('Error loading instructors:', err);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const loadUsageStats = async (approvedInstructors: Instructor[]) => {
+    const entries = await Promise.all(
+      approvedInstructors.map(async (instructor) => {
+        const sessions = await getInstructorSessions(instructor.id);
+        const totalStudents = sessions.reduce((sum, s) => sum + s.players.length, 0);
+        return [instructor.id, totalStudents] as [string, number];
+      })
+    );
+    setInstructorStats(new Map(entries));
   };
 
   const handleApprove = async () => {
@@ -180,6 +194,7 @@ export function AdminDashboard() {
                 <span>Email</span>
                 <span>Organization</span>
                 <span>Sessions</span>
+                <span>Total Students</span>
                 <span>Last Active</span>
                 <span>Actions</span>
               </div>
@@ -196,6 +211,7 @@ export function AdminDashboard() {
                     <span className="email">{instructor.email}</span>
                     <span>{instructor.organization || '-'}</span>
                     <span>{instructor.sessionsCreated}</span>
+                    <span>{instructorStats.get(instructor.id) ?? '—'}</span>
                     <span>
                       {instructor.lastActive
                         ? instructor.lastActive.toLocaleDateString()

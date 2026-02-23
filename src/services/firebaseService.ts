@@ -342,28 +342,35 @@ export function subscribeToSession(sessionId: string, callback: (session: Sessio
   });
 }
 
+type JoinSessionResult = { player: Player; error?: undefined } | { player: null; error: string };
+
 // Player Functions
-export async function joinSession(sessionCode: string, playerName: string): Promise<Player | null> {
+export async function joinSession(sessionCode: string, playerName: string): Promise<JoinSessionResult> {
   const normalizedCode = sessionCode.toUpperCase();
   const session = (await getSessionByCode(normalizedCode)) || (await getSession(sessionCode));
-  if (!session) return null;
+  if (!session) return { player: null, error: 'SESSION_INVALID' };
 
-  // Check if player already exists in session (reconnection)
+  // Check if player already exists in session
   const existingPlayer = await getPlayerByNameInSession(session.id, playerName);
   if (existingPlayer) {
+    // Block duplicate joins during setup; allow reconnection once game is underway
+    if (session.status === 'setup') {
+      return { player: null, error: 'NAME_TAKEN' };
+    }
+    // Reconnect
     await updateDoc(doc(db, 'players', existingPlayer.id), {
       isConnected: true,
       lastSeen: serverTimestamp()
     });
-    return { ...existingPlayer, isConnected: true, lastSeen: new Date() };
+    return { player: { ...existingPlayer, isConnected: true, lastSeen: new Date() } };
   }
 
   // Block new joins only if the session has ended or is expired
-  if (session.status === 'completed' || new Date() > session.expiresAt) return null;
+  if (session.status === 'completed' || new Date() > session.expiresAt) return { player: null, error: 'SESSION_INVALID' };
 
   // Enforce player cap (default 100)
   const maxPlayers = 100;
-  if (session.players.length >= maxPlayers) return null;
+  if (session.players.length >= maxPlayers) return { player: null, error: 'SESSION_INVALID' };
 
   // Create new player
   const playerId = doc(collection(db, 'players')).id;
@@ -389,7 +396,7 @@ export async function joinSession(sessionCode: string, playerName: string): Prom
   });
   await batch.commit();
 
-  return player;
+  return { player };
 }
 
 export async function getPlayerByNameInSession(sessionId: string, name: string): Promise<Player | null> {

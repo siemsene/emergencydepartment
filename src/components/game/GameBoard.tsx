@@ -556,10 +556,6 @@ export function GameBoard() {
       <div className="board-layout">
         {/* Waiting Area */}
         <div className="waiting-area">
-          <div className="entry-door">
-            <span>Entry</span>
-          </div>
-
           <WaitingQueue
             patients={gameState.waitingRoom}
             maxSize={params.maxWaitingRoom}
@@ -571,10 +567,6 @@ export function GameBoard() {
             riskEventRolls={params.riskEventRolls}
             timeSensitiveWaitingHarms={params.timeSensitiveWaitingHarms}
           />
-
-          <div className="exit-door">
-            <span>Exit</span>
-          </div>
         </div>
 
         {/* Room Grid */}
@@ -678,13 +670,19 @@ export function GameBoard() {
                   <strong>{formatCurrency(params.maxStaffingBudget - staffingCost, currencySymbol)}</strong>
                 </div>
               </div>
-              <Button
-                variant="primary"
-                onClick={handleStaffingComplete}
-                disabled={gameState.rooms.length === 0}
-              >
-                Finish Staffing
-              </Button>
+              {!isAsyncMode && gameState.staffingComplete ? (
+                <div className="staffing-waiting-message">
+                  Waiting for other players to finish staffing...
+                </div>
+              ) : (
+                <Button
+                  variant="primary"
+                  onClick={handleStaffingComplete}
+                  disabled={gameState.rooms.length === 0}
+                >
+                  Finish Staffing
+                </Button>
+              )}
             </div>
           </div>
         )}

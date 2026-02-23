@@ -148,29 +148,10 @@
 .waiting-area {
   background: white;
   border-radius: 16px;
-  padding: 1rem;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-}
-
-.entry-door,
-.exit-door {
-  padding: 0.75rem;
-  text-align: center;
-  font-weight: 600;
-  border-radius: 8px;
-  margin-bottom: 1rem;
-}
-
-.entry-door {
-  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-  color: white;
-}
-
-.exit-door {
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-  color: white;
-  margin-top: 1rem;
-  margin-bottom: 0;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 0 2px #22c55e;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 /* Room Grid */
@@ -310,6 +291,17 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+}
+
+.staffing-waiting-message {
+  text-align: center;
+  padding: 0.6rem 1rem;
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  color: #166534;
+  font-size: 0.875rem;
+  font-weight: 500;
 }
 
 .budget-info {

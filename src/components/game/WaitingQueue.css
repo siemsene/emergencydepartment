@@ -1,46 +1,55 @@
 .waiting-queue {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  flex: 1;
+  min-height: 0;
 }
 
 .queue-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 0.875rem 1rem;
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  flex-shrink: 0;
 }
 
 .queue-title {
+  font-size: 0.75rem;
   font-weight: 700;
-  color: #1e293b;
+  color: white;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .queue-count {
-  font-size: 0.875rem;
-  color: #64748b;
-  background: #f1f5f9;
-  padding: 0.25rem 0.5rem;
-  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #14532d;
+  background: rgba(255, 255, 255, 0.35);
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
 }
 
 .queue-slots {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  max-height: 500px;
+  gap: 0.4rem;
+  flex: 1;
   overflow-y: auto;
+  padding: 0.75rem;
+  background: #f0fdf4;
 }
 
 .queue-slot {
   width: 100%;
-  min-height: 56px;
-  border: 2px dashed #e2e8f0;
+  min-height: 52px;
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
-  padding: 0.5rem;
+  padding: 0.4rem;
   padding-right: 55px; /* Make room for dice */
 }
 
@@ -50,25 +59,26 @@
 }
 
 .queue-slot.filled {
-  border-style: solid;
-  border-color: #94a3b8;
-  background: #f8fafc;
+  background: white;
+  border: 1.5px solid #e2e8f0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 
 .queue-slot.selected {
   border-color: #3b82f6;
-  background: rgba(59, 130, 246, 0.1);
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+  background: rgba(59, 130, 246, 0.06);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
 }
 
 .queue-slot.empty {
-  background: #fafafa;
+  border: 1.5px dashed #f1f5f9;
+  background: transparent;
 }
 
 .slot-number {
-  color: #cbd5e1;
+  color: #e2e8f0;
   font-weight: 600;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
 }
 
 .event-indicator {
@@ -122,13 +132,15 @@
 }
 
 .queue-full-warning {
+  margin: 0 0.75rem 0.75rem;
   background: #fef2f2;
   color: #dc2626;
-  padding: 0.5rem;
+  padding: 0.5rem 0.75rem;
   border-radius: 6px;
   font-size: 0.75rem;
   text-align: center;
-  font-weight: 500;
+  font-weight: 600;
+  flex-shrink: 0;
 }
 
 /* Patient Arrival Animation */

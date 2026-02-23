@@ -35,10 +35,14 @@ export function JoinSession() {
     setIsLoading(true);
 
     try {
-      const player = await joinSession(sessionCode.toUpperCase().trim(), playerName.trim());
+      const { player, error: joinError } = await joinSession(sessionCode.toUpperCase().trim(), playerName.trim());
 
       if (!player) {
-        setError('Invalid session code or session has expired');
+        if (joinError === 'NAME_TAKEN') {
+          setError('That name is already taken in this session. Please choose a different name.');
+        } else {
+          setError('Invalid session code or session has expired');
+        }
         setIsLoading(false);
         return;
       }
