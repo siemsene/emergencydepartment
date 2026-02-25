@@ -21,7 +21,9 @@ service cloud.firestore {
       allow read: if true;
       // Only authenticated instructors can write to sessions
       allow create: if isSignedIn();
-      allow update: if isSignedIn();
+      allow update: if isSignedIn() || (
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players'])
+      );
       allow delete: if isSignedIn();
     }
 
@@ -30,9 +32,11 @@ service cloud.firestore {
       allow read: if true;
       // Anyone can create a player (joining a session)
       allow create: if true;
-      // Anyone can update a player, but only allowed fields
-      allow update: if request.resource.data.diff(resource.data).affectedKeys()
-        .hasOnly(['gameState', 'isConnected', 'lastSeen']);
+      // Anyone can update a player, but only allowed fields unless signed in
+      allow update: if isSignedIn() || (
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['gameState', 'isConnected', 'lastSeen'])
+      );
       // Only authenticated users (instructors) can delete players
       allow delete: if isSignedIn();
     }
