@@ -119,7 +119,7 @@ interface SendEmailData {
 }
 
 export const sendEmail = onCall(
-  {secrets: [smtp2goApiKey, adminEmail, fromEmail], enforceAppCheck: true},
+  {secrets: [smtp2goApiKey, adminEmail, fromEmail]},
   async (request) => {
     const data = request.data as SendEmailData;
 

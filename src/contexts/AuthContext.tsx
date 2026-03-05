@@ -37,6 +37,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(firebaseUser);
 
         if (firebaseUser) {
+          // Set loading while we fetch instructor data to prevent
+          // protected routes from redirecting before data is ready
+          setIsLoading(true);
           let instructorData = await getInstructor(firebaseUser.uid);
 
           // If no instructor document exists, check if this is the admin email
