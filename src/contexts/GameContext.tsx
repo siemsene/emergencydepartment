@@ -97,24 +97,35 @@ export function GameProvider({ children }: { children: ReactNode }) {
       if (updatedPlayer) {
         // Detect nudge
         const incomingNudge = updatedPlayer.nudgedAt ?? 0;
-        if (incomingNudge > lastNudgedAtRef.current) {
+        const isNewNudge = incomingNudge > lastNudgedAtRef.current;
+        if (isNewNudge) {
           lastNudgedAtRef.current = incomingNudge;
           setNudged(true);
           setTimeout(() => setNudged(false), 5000);
         }
 
         setPlayer(updatedPlayer);
+
+        // If this snapshot was triggered by a nudge and the game state version
+        // hasn't advanced, skip overwriting local state. Player actions like
+        // movePatientToRoom/addRoom modify state locally without writing to
+        // Firebase, so a nudge-triggered snapshot would revert those changes.
+        const incomingVersion = updatedPlayer.gameState.stateVersion ?? 0;
+        if (isNewNudge && incomingVersion <= localVersionRef.current) {
+          return;
+        }
+
         // Use functional update to compare incoming state with current state
         setGameState(prevState => {
           if (!prevState) return updatedPlayer.gameState;
 
-          const incomingVersion = updatedPlayer.gameState.stateVersion ?? 0;
-
           // Reject Firebase updates that are older than our local version
           if (incomingVersion < localVersionRef.current) {
+            if (import.meta.env.DEV) console.log('[Subscription] REJECTED update: incoming', incomingVersion, '< local', localVersionRef.current, 'phase:', updatedPlayer.gameState.currentPhase);
             return prevState;
           }
 
+          if (import.meta.env.DEV) console.log('[Subscription] ACCEPTED update: incoming', incomingVersion, 'local was', localVersionRef.current, 'phase:', updatedPlayer.gameState.currentPhase);
           // Accept the incoming state and sync our local version tracker
           localVersionRef.current = incomingVersion;
           return updatedPlayer.gameState;

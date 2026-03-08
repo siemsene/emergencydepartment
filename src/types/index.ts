@@ -62,13 +62,14 @@ export interface Session {
   startedAt?: Date;
   endedAt?: Date;
   expiresAt: Date;
-  status: 'setup' | 'staffing' | 'sequencing' | 'completed';
+  status: 'setup' | 'staffing' | 'sequencing' | 'paused' | 'completed';
   currentHour: number;
   parameters: GameParameters;
   arrivals: HourlyArrivals[];
   players: string[];
   usePregenerated: boolean;
   asyncMode?: boolean;
+  pauseAfterTurn?: boolean;
 }
 
 // Game State Types
@@ -163,6 +164,7 @@ export interface PlayerResult {
   patientsTreated: { A: number; B: number; C: number };
   staffingCost: number;
   waitingCosts: number;
+  riskEventCosts: number;
   hoursCompleted: number;
 }
 

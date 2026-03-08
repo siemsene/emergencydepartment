@@ -131,6 +131,25 @@
   color: #f87171;
 }
 
+.header-stat.players-ready {
+  border-left: 1px solid #334155;
+  padding-left: 2rem;
+}
+
+.header-stat.players-ready .stat-value {
+  color: #fbbf24;
+}
+
+.header-stat.players-ready.last-player .stat-value {
+  animation: blink-ready 0.8s ease-in-out infinite;
+  color: #f87171;
+}
+
+@keyframes blink-ready {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 /* Board Layout */
 .board-layout {
   display: grid;
@@ -378,6 +397,14 @@
   margin: 0;
   color: #64748b;
   line-height: 1.5;
+}
+
+.waiting-message.paused-message {
+  border: 3px solid #f97316;
+}
+
+.waiting-message.paused-message h3 {
+  color: #ea580c;
 }
 
 @keyframes popIn {

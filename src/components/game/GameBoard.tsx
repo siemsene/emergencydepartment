@@ -7,7 +7,8 @@ import { WaitingQueue } from './WaitingQueue';
 import { TurnSummary } from './TurnSummary';
 import { Button } from '../shared/Button';
 import { Modal } from '../shared/Modal';
-import { Room, RoomType, PatientType } from '../../types';
+import { Room, RoomType, PatientType, Player } from '../../types';
+import { subscribeToSessionPlayers } from '../../services/firebaseService';
 import { HOURS_OF_DAY, PATIENT_ROOM_OPTIONS, DEFAULT_PARAMETERS } from '../../data/gameConstants';
 import { formatCurrency, canTreatInRoom, getTreatmentTime } from '../../utils/gameUtils';
 import { AnimatedCurrency } from '../shared/AnimatedCurrency';
@@ -43,6 +44,7 @@ export function GameBoard() {
   const [phaseBanner, setPhaseBanner] = useState('');
   const [displayedRevenue, setDisplayedRevenue] = useState(0);
   const [displayedCost, setDisplayedCost] = useState(0);
+  const [playersReady, setPlayersReady] = useState<{ ready: number; total: number } | null>(null);
 
   // Refs for cleanup and stable function references
   const rollAnimationRef = useRef<NodeJS.Timeout | null>(null);
@@ -64,6 +66,28 @@ export function GameBoard() {
       if (rollingFailsafeRef.current) clearTimeout(rollingFailsafeRef.current);
     };
   }, []);
+
+  // Track player readiness in sync multi-player games
+  useEffect(() => {
+    if (!session?.id || session.asyncMode) return;
+    if (session.status !== 'sequencing' && session.status !== 'staffing') return;
+
+    const unsubscribe = subscribeToSessionPlayers(session.id, (allPlayers: Player[]) => {
+      if (allPlayers.length <= 1) {
+        setPlayersReady(null);
+        return;
+      }
+      const readyCount = allPlayers.filter(p => {
+        if (session.status === 'staffing') {
+          return p.gameState.staffingComplete;
+        }
+        return p.gameState.currentPhase === 'waiting' && p.gameState.hourComplete;
+      }).length;
+      setPlayersReady({ ready: readyCount, total: allPlayers.length });
+    });
+
+    return () => unsubscribe();
+  }, [session?.id, session?.asyncMode, session?.status, session?.currentHour]);
 
   const isAsyncMode = !!session?.asyncMode;
   // In async mode, show staffing UI based on player's own staffingComplete flag
@@ -548,6 +572,12 @@ export function GameBoard() {
             <span className="stat-label">Profit</span>
             <AnimatedCurrency value={profit} currencySymbol={currencySymbol} className="stat-value" />
           </div>
+          {playersReady && (
+            <div className={`header-stat players-ready${playersReady.ready === playersReady.total - 1 && gameState.currentPhase !== 'waiting' ? ' last-player' : ''}`}>
+              <span className="stat-label">Ready</span>
+              <span className="stat-value">{playersReady.ready}/{playersReady.total}</span>
+            </div>
+          )}
         </div>
       </div>
 
@@ -751,11 +781,21 @@ export function GameBoard() {
         )}
 
         {/* Waiting For Players Message (sync mode only) */}
-        {!isAsyncMode && gameState.currentPhase === 'waiting' && (
+        {!isAsyncMode && gameState.currentPhase === 'waiting' && session?.status !== 'paused' && (
           <div className="waiting-message-container">
             <div className="waiting-message">
               <h3>Waiting for other players...</h3>
               <p>The next hour will begin once all players have finished their turn.</p>
+            </div>
+          </div>
+        )}
+
+        {/* Game Paused Overlay */}
+        {session?.status === 'paused' && (
+          <div className="waiting-message-container">
+            <div className="waiting-message paused-message">
+              <h3>Game Paused</h3>
+              <p>The instructor has paused the game. Play will resume shortly.</p>
             </div>
           </div>
         )}

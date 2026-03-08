@@ -108,6 +108,7 @@ export function InstructorDashboard() {
       setup: { label: 'Setup', color: '#64748b' },
       staffing: { label: 'Staffing', color: '#f59e0b' },
       sequencing: { label: 'In Progress', color: '#22c55e' },
+      paused: { label: 'Paused', color: '#f97316' },
       completed: { label: 'Completed', color: '#3b82f6' }
     };
 

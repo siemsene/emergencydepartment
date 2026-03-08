@@ -287,6 +287,11 @@ export async function advanceSessionHour(sessionId: string, newHour: number) {
         currentHour: 24,
         endedAt: serverTimestamp()
       });
+    } else if (sessionSnap.data().pauseAfterTurn) {
+      transaction.update(sessionRef, {
+        status: 'paused',
+        pauseAfterTurn: false
+      });
     } else {
       transaction.update(sessionRef, {
         currentHour: newHour
@@ -299,6 +304,44 @@ export async function endSessionEarly(sessionId: string) {
   await updateDoc(doc(db, 'sessions', sessionId), {
     status: 'completed',
     endedAt: serverTimestamp()
+  });
+}
+
+export async function pauseSession(sessionId: string) {
+  await updateDoc(doc(db, 'sessions', sessionId), {
+    pauseAfterTurn: true
+  });
+}
+
+export async function cancelPauseSession(sessionId: string) {
+  await updateDoc(doc(db, 'sessions', sessionId), {
+    pauseAfterTurn: false
+  });
+}
+
+export async function resumeSession(sessionId: string) {
+  const sessionRef = doc(db, 'sessions', sessionId);
+  await runTransaction(db, async (transaction) => {
+    const sessionSnap = await transaction.get(sessionRef);
+    if (!sessionSnap.exists()) return;
+
+    const currentHour = sessionSnap.data().currentHour ?? 0;
+    const newHour = currentHour + 1;
+
+    if (newHour > 24) {
+      transaction.update(sessionRef, {
+        status: 'completed',
+        currentHour: 24,
+        endedAt: serverTimestamp(),
+        pauseAfterTurn: false
+      });
+    } else {
+      transaction.update(sessionRef, {
+        status: 'sequencing',
+        currentHour: newHour,
+        pauseAfterTurn: false
+      });
+    }
   });
 }
 

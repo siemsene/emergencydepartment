@@ -217,6 +217,31 @@
   color: #1e293b;
 }
 
+/* Export mode overrides */
+.game-results.exporting .results-content {
+  width: 1200px;
+  max-width: 1200px;
+}
+
+.game-results.exporting .charts-grid {
+  grid-template-columns: 1fr;
+}
+
+.game-results.exporting .chart-card.wide {
+  grid-column: span 1;
+}
+
+.game-results.exporting .chart-card,
+.game-results.exporting .results-section {
+  background: #ffffff;
+}
+
+.game-results.exporting .player-name {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
 /* In-progress badge for async mode */
 .in-progress-badge {
   display: inline-block;

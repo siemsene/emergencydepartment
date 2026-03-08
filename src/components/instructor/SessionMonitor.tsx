@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Session, Player } from '../../types';
+import { Session, Player, Room, Patient, PatientType, RoomType, GameParameters } from '../../types';
 import {
   getSession,
   subscribeToSession,
@@ -9,13 +9,16 @@ import {
   advanceSessionToSequencing,
   advanceSessionHour,
   endSessionEarly,
+  pauseSession,
+  cancelPauseSession,
+  resumeSession,
   nudgePlayer,
   kickPlayer,
   updatePlayerGameState,
   updatePlayerGameStateFields
 } from '../../services/firebaseService';
-import { formatCurrency, calculateProfit } from '../../utils/gameUtils';
-import { HOURS_OF_DAY } from '../../data/gameConstants';
+import { formatCurrency, calculateProfit, getTreatmentTime, calculateUtilization, rollD20, getEffectiveHour } from '../../utils/gameUtils';
+import { HOURS_OF_DAY, DEFAULT_PARAMETERS } from '../../data/gameConstants';
 import { Button } from '../shared/Button';
 import { Modal } from '../shared/Modal';
 import './SessionMonitor.css';
@@ -29,6 +32,7 @@ export function SessionMonitor() {
   const [isLoading, setIsLoading] = useState(true);
   const [kickPlayerId, setKickPlayerId] = useState<string | null>(null);
   const [nudgePlayerId, setNudgePlayerId] = useState<string | null>(null);
+  const [endingPlayerId, setEndingPlayerId] = useState<string | null>(null);
   const [showEndSessionModal, setShowEndSessionModal] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
   const advancingRef = useRef(false);
@@ -148,11 +152,62 @@ export function SessionMonitor() {
     setTimeout(() => setNudgePlayerId(null), 3000);
   };
 
+  // Strip undefined values from an object (Firestore rejects undefined)
+  const stripUndefined = (obj: unknown): unknown => {
+    if (obj === null || obj === undefined) return null;
+    if (Array.isArray(obj)) return obj.map(stripUndefined);
+    if (typeof obj === 'object') {
+      const cleaned: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+        if (value !== undefined) cleaned[key] = stripUndefined(value);
+      }
+      return cleaned;
+    }
+    return obj;
+  };
+
+  const autoSequencePatients = (
+    currentRooms: Room[],
+    currentWaitingRoom: Patient[],
+    params: GameParameters
+  ): { rooms: Room[]; waitingRoom: Patient[] } => {
+    const primaryMapping: Record<PatientType, RoomType> = { A: 'high', B: 'medium', C: 'low' };
+    const rooms = currentRooms.map(r => ({ ...r, patient: r.patient ? { ...r.patient } : r.patient }));
+    let waitingRoom = [...currentWaitingRoom];
+
+    for (const type of ['A', 'B', 'C'] as PatientType[]) {
+      const roomType = primaryMapping[type];
+      const waitingOfType = waitingRoom.filter(p => p.type === type);
+      const freeRooms = rooms.filter(r => r.type === roomType && !r.isOccupied);
+
+      const count = Math.min(waitingOfType.length, freeRooms.length);
+      for (let i = 0; i < count; i++) {
+        const patient = { ...waitingOfType[i] };
+        patient.status = 'treating' as const;
+        patient.treatmentProgress = getTreatmentTime(type, params);
+        patient.treatedInMismatchRoom = false;
+        freeRooms[i].isOccupied = true;
+        freeRooms[i].patient = patient;
+        waitingRoom = waitingRoom.filter(p => p.id !== patient.id);
+      }
+    }
+
+    return { rooms, waitingRoom };
+  };
+
   const handleForceEndDecision = async (playerId: string) => {
     const player = players.find(p => p.id === playerId);
     if (!player || !session) return;
+    setEndingPlayerId(playerId);
+    try {
+    const gs = player.gameState;
+    console.log('[ForceEnd] Player:', player.name, 'Phase:', gs.currentPhase,
+      'Session status:', session.status, 'Async:', session.asyncMode,
+      'Version:', gs.stateVersion, 'LocalHour:', gs.currentHour,
+      'SessionHour:', session.currentHour);
 
     if (session.asyncMode) {
+      const newVersion = (player.gameState.stateVersion ?? 0) + 100;
       if (!player.gameState.staffingComplete) {
         // Force complete staffing in async mode
         await updatePlayerGameStateFields(playerId, {
@@ -160,37 +215,294 @@ export function SessionMonitor() {
           totalCost: player.gameState.staffingCost,
           currentHour: 1,
           currentPhase: 'arriving',
-          hourComplete: false
+          hourComplete: false,
+          stateVersion: newVersion
         });
       } else {
         // Force complete the player's current hour in async mode
         const playerHour = player.gameState.currentHour ?? 0;
-        await updatePlayerGameStateFields(playerId, {
-          currentPhase: playerHour < 24 ? 'arriving' : 'arriving',
-          hourComplete: playerHour >= 24,
-          currentHour: Math.min(playerHour + 1, 24),
-          lastCompletedHour: playerHour,
-          lastTreatmentHour: playerHour,
-          lastSequencingHour: playerHour
-        });
+        const currentPhase = player.gameState.currentPhase;
+        const params = session.parameters || DEFAULT_PARAMETERS;
+        const gs = player.gameState;
+
+        if (currentPhase === 'waiting') {
+          // Already done — advance to next hour
+          await updatePlayerGameStateFields(playerId, {
+            currentPhase: 'arriving',
+            hourComplete: playerHour >= 24,
+            currentHour: Math.min(playerHour + 1, 24),
+            lastCompletedHour: playerHour,
+            stateVersion: newVersion
+          });
+        } else if (currentPhase === 'review') {
+          // Past treatment — advance to next hour
+          await updatePlayerGameStateFields(playerId, {
+            currentPhase: 'arriving',
+            hourComplete: playerHour >= 24,
+            currentHour: Math.min(playerHour + 1, 24),
+            lastCompletedHour: playerHour,
+            stateVersion: newVersion
+          });
+        } else {
+          // Full round processing for async mode (same as sync but advances hour)
+          const { rooms: allocatedRooms, waitingRoom: allocatedWaiting } = autoSequencePatients(
+            gs.rooms, gs.waitingRoom, params
+          );
+          const utilization = calculateUtilization(allocatedRooms);
+          let waitingRoom = [...allocatedWaiting];
+          const stats = JSON.parse(JSON.stringify(gs.stats));
+          let additionalCosts = 0;
+
+          const expandRiskRolls = (baseRolls: number[], waitingTime: number) => {
+            const expanded = new Set<number>();
+            for (const roll of baseRolls) {
+              for (let i = 0; i <= Math.max(0, waitingTime); i++) {
+                const value = roll - i;
+                if (value >= 1) expanded.add(value);
+              }
+            }
+            return Array.from(expanded);
+          };
+
+          for (const patient of [...waitingRoom]) {
+            const roll = rollD20();
+            const baseRiskRolls = params.riskEventRolls[patient.type] ?? [];
+            const riskRolls = params.timeSensitiveWaitingHarms
+              ? expandRiskRolls(baseRiskRolls, patient.waitingTime ?? 0)
+              : baseRiskRolls;
+            if (riskRolls.includes(roll)) {
+              if (patient.type === 'A') {
+                stats.cardiacArrests++;
+                additionalCosts += params.riskEventCost.A;
+              } else if (patient.type === 'B') {
+                stats.lwbs.B++;
+                additionalCosts += params.riskEventCost.B;
+              } else {
+                stats.lwbs.C++;
+                additionalCosts += params.riskEventCost.C;
+              }
+              stats.riskEventCosts += params.riskEventCost[patient.type];
+              waitingRoom = waitingRoom.filter(p => p.id !== patient.id);
+            }
+          }
+
+          waitingRoom = waitingRoom.map(p => ({
+            ...p,
+            waitingTime: (p.waitingTime ?? 0) + 1
+          }));
+          const hourlyWaitingCost = waitingRoom.reduce((sum, p) => sum + params.waitingCostPerHour[p.type], 0);
+          stats.waitingCosts += hourlyWaitingCost;
+          for (const p of waitingRoom) {
+            if (p.waitingTime > stats.maxWaitingTime[p.type]) {
+              stats.maxWaitingTime[p.type] = p.waitingTime;
+            }
+          }
+
+          let rooms = [...allocatedRooms];
+          let completedPatients = [...gs.completedPatients];
+          let additionalRevenue = 0;
+          rooms = rooms.map(room => {
+            if (!room.patient) return room.isOccupied ? { ...room, isOccupied: false } : room;
+            const progress = room.patient.treatmentProgress ?? getTreatmentTime(room.patient.type, params);
+            const newProgress = progress - 1;
+            if (newProgress <= 0) {
+              const completed = { ...room.patient, status: 'treated' as const, treatmentProgress: 0, roomId: null };
+              completedPatients.push(completed);
+              stats.patientsTreated[room.patient.type]++;
+              stats.totalTreatments++;
+              if (room.patient.treatedInMismatchRoom) stats.mismatchTreatments++;
+              additionalRevenue += params.revenuePerPatient[room.patient.type];
+              return { ...room, isOccupied: false, patient: null };
+            }
+            return { ...room, patient: { ...room.patient, treatmentProgress: newProgress } };
+          });
+
+          stats.hourlyUtilization.push(utilization);
+          stats.hourlyQueueLength.push(allocatedWaiting.length);
+
+          const nextHour = Math.min(playerHour + 1, 24);
+          const newGameState = {
+            ...gs,
+            rooms,
+            waitingRoom,
+            completedPatients,
+            totalRevenue: gs.totalRevenue + additionalRevenue,
+            totalCost: gs.totalCost + additionalCosts + hourlyWaitingCost,
+            stats,
+            currentPhase: 'arriving' as const,
+            hourComplete: playerHour >= 24,
+            currentHour: nextHour,
+            lastArrivalsHour: playerHour,
+            lastSequencingHour: playerHour,
+            lastTreatmentHour: playerHour,
+            lastCompletedHour: playerHour,
+            stateVersion: newVersion
+          };
+          await updatePlayerGameState(playerId, stripUndefined(newGameState) as typeof newGameState);
+        }
       }
     } else if (session.status === 'staffing') {
       // Force complete staffing: preserve their current room choices
+      const newVersion = (player.gameState.stateVersion ?? 0) + 100;
       await updatePlayerGameStateFields(playerId, {
         staffingComplete: true,
         totalCost: player.gameState.staffingCost,
-        hourComplete: true
+        hourComplete: true,
+        stateVersion: newVersion
       });
     } else {
-      // Force complete the current game hour regardless of phase
-      await updatePlayerGameStateFields(playerId, {
-        currentPhase: 'waiting',
-        hourComplete: true,
-        lastCompletedHour: session.currentHour,
-        lastTreatmentHour: session.currentHour,
-        lastSequencingHour: session.currentHour
-      });
+      // Force complete the current game hour — do full round processing server-side
+      const params = session.parameters || DEFAULT_PARAMETERS;
+      const gs = player.gameState;
+      const currentPhase = gs.currentPhase;
+      const newVersion = (gs.stateVersion ?? 0) + 100;
+
+      if (currentPhase === 'waiting') {
+        // Already done — just ensure marked complete
+        await updatePlayerGameStateFields(playerId, {
+          hourComplete: true,
+          lastCompletedHour: session.currentHour,
+          stateVersion: newVersion
+        });
+      } else if (currentPhase === 'review') {
+        // Past treatment — mark as waiting/complete
+        await updatePlayerGameStateFields(playerId, {
+          currentPhase: 'waiting',
+          hourComplete: true,
+          lastCompletedHour: session.currentHour,
+          stateVersion: newVersion
+        });
+      } else {
+        // Player is in arriving/sequencing/rolling/treating
+        // Do full round processing: auto-allocate → risk events → treatment → stats
+
+        // 1. Auto-allocate patients to rooms
+        const { rooms: allocatedRooms, waitingRoom: allocatedWaiting } = autoSequencePatients(
+          gs.rooms, gs.waitingRoom, params
+        );
+
+        // 2. Record utilization after allocation
+        const utilization = calculateUtilization(allocatedRooms);
+
+        // 3. Process risk events for waiting patients
+        let waitingRoom = [...allocatedWaiting];
+        const stats = JSON.parse(JSON.stringify(gs.stats));
+        let additionalCosts = 0;
+
+        const expandRiskRolls = (baseRolls: number[], waitingTime: number) => {
+          const expanded = new Set<number>();
+          for (const roll of baseRolls) {
+            for (let i = 0; i <= Math.max(0, waitingTime); i++) {
+              const value = roll - i;
+              if (value >= 1) expanded.add(value);
+            }
+          }
+          return Array.from(expanded);
+        };
+
+        for (const patient of [...waitingRoom]) {
+          const roll = rollD20();
+          const baseRiskRolls = params.riskEventRolls[patient.type] ?? [];
+          const riskRolls = params.timeSensitiveWaitingHarms
+            ? expandRiskRolls(baseRiskRolls, patient.waitingTime ?? 0)
+            : baseRiskRolls;
+          if (riskRolls.includes(roll)) {
+            if (patient.type === 'A') {
+              stats.cardiacArrests++;
+              additionalCosts += params.riskEventCost.A;
+            } else if (patient.type === 'B') {
+              stats.lwbs.B++;
+              additionalCosts += params.riskEventCost.B;
+            } else {
+              stats.lwbs.C++;
+              additionalCosts += params.riskEventCost.C;
+            }
+            stats.riskEventCosts += params.riskEventCost[patient.type];
+            waitingRoom = waitingRoom.filter(p => p.id !== patient.id);
+          }
+        }
+
+        // 4. Increment waiting time & calculate waiting costs
+        waitingRoom = waitingRoom.map(p => ({
+          ...p,
+          waitingTime: (p.waitingTime ?? 0) + 1
+        }));
+        const hourlyWaitingCost = waitingRoom.reduce((sum, p) => sum + params.waitingCostPerHour[p.type], 0);
+        stats.waitingCosts += hourlyWaitingCost;
+
+        // Update max waiting times
+        for (const p of waitingRoom) {
+          if (p.waitingTime > stats.maxWaitingTime[p.type]) {
+            stats.maxWaitingTime[p.type] = p.waitingTime;
+          }
+        }
+
+        // 5. Process treatment — advance rooms
+        let rooms = [...allocatedRooms];
+        let completedPatients = [...gs.completedPatients];
+        let additionalRevenue = 0;
+
+        rooms = rooms.map(room => {
+          if (!room.patient) return room.isOccupied ? { ...room, isOccupied: false } : room;
+          const progress = room.patient.treatmentProgress ?? getTreatmentTime(room.patient.type, params);
+          const newProgress = progress - 1;
+          if (newProgress <= 0) {
+            const completed = { ...room.patient, status: 'treated' as const, treatmentProgress: 0, roomId: null };
+            completedPatients.push(completed);
+            stats.patientsTreated[room.patient.type]++;
+            stats.totalTreatments++;
+            if (room.patient.treatedInMismatchRoom) stats.mismatchTreatments++;
+            additionalRevenue += params.revenuePerPatient[room.patient.type];
+            return { ...room, isOccupied: false, patient: null };
+          }
+          return { ...room, patient: { ...room.patient, treatmentProgress: newProgress } };
+        });
+
+        // 6. Record hourly stats
+        stats.hourlyUtilization.push(utilization);
+        stats.hourlyQueueLength.push(allocatedWaiting.length);
+
+        // 7. Write complete game state
+        const newGameState = {
+          ...gs,
+          rooms,
+          waitingRoom,
+          completedPatients,
+          totalRevenue: gs.totalRevenue + additionalRevenue,
+          totalCost: gs.totalCost + additionalCosts + hourlyWaitingCost,
+          stats,
+          currentPhase: 'waiting' as const,
+          hourComplete: true,
+          lastArrivalsHour: session.currentHour,
+          lastSequencingHour: session.currentHour,
+          lastTreatmentHour: session.currentHour,
+          lastCompletedHour: session.currentHour,
+          stateVersion: newVersion
+        };
+        await updatePlayerGameState(playerId, stripUndefined(newGameState) as typeof newGameState);
+      }
     }
+    console.log('[ForceEnd] Success for player:', player.name);
+    } catch (error) {
+      console.error('[ForceEnd] Error forcing end decision:', error);
+    } finally {
+      setTimeout(() => setEndingPlayerId(null), 2000);
+    }
+  };
+
+  const handlePauseSession = async () => {
+    if (!sessionId) return;
+    try { await pauseSession(sessionId); } catch (e) { console.error('Pause failed:', e); }
+  };
+
+  const handleCancelPause = async () => {
+    if (!sessionId) return;
+    try { await cancelPauseSession(sessionId); } catch (e) { console.error('Cancel pause failed:', e); }
+  };
+
+  const handleResumeSession = async () => {
+    if (!sessionId) return;
+    try { await resumeSession(sessionId); } catch (e) { console.error('Resume failed:', e); }
   };
 
   useEffect(() => {
@@ -346,10 +658,26 @@ export function SessionMonitor() {
         <div className="header-right">
           <div className={`status-indicator ${session.status}`}>
             {session.asyncMode && session.status === 'sequencing' ? 'Async Mode' :
+              session.status === 'paused' ? `PAUSED — Hour ${session.currentHour} Complete` :
               session.status === 'staffing' ? 'Staffing Phase' :
-              session.status === 'sequencing' ? `Hour ${session.currentHour}: ${HOURS_OF_DAY[session.currentHour - 1] || ''}` :
+              session.status === 'sequencing' ? `Hour ${session.currentHour}: ${HOURS_OF_DAY[session.currentHour - 1] || ''}${session.pauseAfterTurn ? ' (Pausing...)' : ''}` :
                 session.status === 'completed' ? 'Completed' : 'Setup'}
           </div>
+          {session.status === 'sequencing' && !session.pauseAfterTurn && !session.asyncMode && (
+            <Button variant="secondary" size="small" onClick={handlePauseSession}>
+              Pause
+            </Button>
+          )}
+          {session.status === 'sequencing' && session.pauseAfterTurn && (
+            <Button variant="secondary" size="small" onClick={handleCancelPause}>
+              Cancel Pause
+            </Button>
+          )}
+          {session.status === 'paused' && (
+            <Button variant="primary" size="small" onClick={handleResumeSession}>
+              Resume Game
+            </Button>
+          )}
           <Button
             variant="danger"
             size="small"
@@ -451,6 +779,9 @@ export function SessionMonitor() {
                       {nudgePlayerId === player.id && (
                         <span className="nudge-feedback">Player nudged</span>
                       )}
+                      {endingPlayerId === player.id && (
+                        <span className="nudge-feedback">Decision ended</span>
+                      )}
                       {!isReady && (
                         <>
                           <button
@@ -464,8 +795,9 @@ export function SessionMonitor() {
                             className="action-btn end"
                             onClick={() => handleForceEndDecision(player.id)}
                             title="End decision"
+                            disabled={endingPlayerId === player.id}
                           >
-                            End
+                            {endingPlayerId === player.id ? 'Ending...' : 'End'}
                           </button>
                         </>
                       )}

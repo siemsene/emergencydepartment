@@ -64,6 +64,17 @@
   color: white;
 }
 
+.status-indicator.paused {
+  background: #f97316;
+  color: white;
+  animation: pulse-pause 2s ease-in-out infinite;
+}
+
+@keyframes pulse-pause {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
 .monitor-content {
   max-width: 1200px;
   margin: 0 auto;

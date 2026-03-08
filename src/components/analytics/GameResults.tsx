@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
-import { Session, PlayerResult } from '../../types';
+import { Session, PlayerResult, Player } from '../../types';
 import { getSession, getSessionPlayers } from '../../services/firebaseService';
 import {
   formatCurrency,
@@ -78,6 +78,13 @@ function polyRegression<T>(data: T[], xKey: keyof T, yKey: keyof T, steps = 30):
   return pts;
 }
 
+const formatCompact = (value: number): string => {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(0)}K`;
+  return String(value);
+};
+
 interface GameResultsProps {
   sessionId?: string;
   playerId?: string;
@@ -96,6 +103,8 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
   const [riskEventsByPlayer, setRiskEventsByPlayer] = useState<Record<string, { A: number; B: number; C: number }>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
+  const [rawPlayers, setRawPlayers] = useState<Player[]>([]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -108,6 +117,7 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
       const playersData = await getSessionPlayers(sessionId!);
 
       setSession(sessionData);
+      setRawPlayers(playersData);
 
       // Calculate results for each player
       const playerResults: PlayerResult[] = playersData.map(player => ({
@@ -129,6 +139,7 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
         patientsTreated: player.gameState.stats.patientsTreated,
         staffingCost: player.gameState.staffingCost,
         waitingCosts: player.gameState.stats.waitingCosts,
+        riskEventCosts: player.gameState.stats.riskEventCosts,
         hoursCompleted: player.gameState.lastCompletedHour ?? 0
       }));
 
@@ -166,57 +177,486 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
     }
   };
 
-  const handleDownloadData = () => {
-    const data = results.map(r => ({
-      name: r.playerName,
-      profit: r.totalProfit,
-      revenue: r.totalRevenue,
-      cost: r.totalCost,
-      avgUtilization: r.avgUtilization.toFixed(2),
-      avgQueueLength: r.avgQueueLength.toFixed(2),
-      maxQueueLength: r.maxQueueLength,
-      cardiacArrests: r.cardiacArrests,
-      mismatchCount: r.mismatchCount,
-      mismatchPercent: r.mismatchPercentage.toFixed(2),
-      maxWaitA: r.maxWaitingTime.A,
-      maxWaitB: r.maxWaitingTime.B,
-      maxWaitC: r.maxWaitingTime.C,
-      treatedA: r.patientsTreated.A,
-      treatedB: r.patientsTreated.B,
-      treatedC: r.patientsTreated.C
-    }));
+  const handleDownloadExcel = async () => {
+    if (!session || results.length === 0) return;
+    setIsExportingExcel(true);
 
-    const csv = [
-      Object.keys(data[0]).join(','),
-      ...data.map(row => Object.values(row).join(','))
-    ].join('\n');
+    try {
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      const currency = session.parameters.currencySymbol || '$';
 
-    const blob = new Blob([csv], { type: 'text/csv' });
+      // Sort rawPlayers by profit to match results order
+      const sortedPlayers = [...rawPlayers].sort((a, b) => {
+        const profitA = calculateProfit(a.gameState.totalRevenue, a.gameState.totalCost);
+        const profitB = calculateProfit(b.gameState.totalRevenue, b.gameState.totalCost);
+        return profitB - profitA;
+      });
+
+      // ── Sheet 1: Summary ──
+      const summarySheet = workbook.addWorksheet('Summary');
+
+      // Title row
+      summarySheet.mergeCells('A1:N1');
+      const titleCell = summarySheet.getCell('A1');
+      titleCell.value = `${session.name} — Code: ${session.code}`;
+      titleCell.font = { bold: true, size: 16, color: { argb: 'FF1E293B' } };
+      titleCell.alignment = { horizontal: 'left', vertical: 'middle' };
+      summarySheet.getRow(1).height = 30;
+
+      // Header row
+      const summaryHeaders = [
+        'Rank', 'Player', 'Profit', 'Revenue', 'Cost', 'Utilization %',
+        'Avg Queue', 'Max Queue', 'Treated A', 'Treated B', 'Treated C',
+        'Cardiac Arrests', 'Mismatches', 'Max Wait A/B/C'
+      ];
+      const headerRow = summarySheet.addRow(summaryHeaders);
+      headerRow.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+        cell.border = {
+          bottom: { style: 'thin', color: { argb: 'FF94A3B8' } }
+        };
+      });
+      headerRow.height = 24;
+
+      // Data rows
+      results.forEach((r, idx) => {
+        const row = summarySheet.addRow([
+          idx + 1,
+          r.playerName,
+          r.totalProfit,
+          r.totalRevenue,
+          r.totalCost,
+          Number(r.avgUtilization.toFixed(1)),
+          Number(r.avgQueueLength.toFixed(1)),
+          r.maxQueueLength,
+          r.patientsTreated.A,
+          r.patientsTreated.B,
+          r.patientsTreated.C,
+          r.cardiacArrests,
+          r.mismatchCount,
+          `${r.maxWaitingTime.A}/${r.maxWaitingTime.B}/${r.maxWaitingTime.C}`
+        ]);
+
+        // Profit color
+        const profitCell = row.getCell(3);
+        profitCell.numFmt = `"${currency}"#,##0`;
+        profitCell.font = {
+          bold: true,
+          color: { argb: r.totalProfit >= 0 ? 'FF16A34A' : 'FFDC2626' }
+        };
+
+        // Revenue/Cost formatting
+        row.getCell(4).numFmt = `"${currency}"#,##0`;
+        row.getCell(5).numFmt = `"${currency}"#,##0`;
+
+        // Alternating row colors
+        if (idx % 2 === 1) {
+          row.eachCell(cell => {
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } };
+          });
+        }
+
+        row.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+
+      // Column widths
+      summarySheet.columns = [
+        { width: 6 }, { width: 20 }, { width: 14 }, { width: 14 }, { width: 14 },
+        { width: 14 }, { width: 12 }, { width: 12 }, { width: 10 }, { width: 10 },
+        { width: 10 }, { width: 14 }, { width: 12 }, { width: 16 }
+      ];
+      summarySheet.views = [{ state: 'frozen', ySplit: 2 }];
+
+      // ── Sheet 2: Hourly Data ──
+      const hourlySheet = workbook.addWorksheet('Hourly Data');
+      const hourlyHeaders = [
+        'Player', 'Hour', 'Utilization', 'Queue Length',
+        'Demand A', 'Demand B', 'Demand C',
+        'Capacity A', 'Capacity B', 'Capacity C'
+      ];
+      const hourlyHeaderRow = hourlySheet.addRow(hourlyHeaders);
+      hourlyHeaderRow.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+
+      sortedPlayers.forEach(player => {
+        // Player section header
+        const sectionRow = hourlySheet.addRow([player.name, '', '', '', '', '', '', '', '', '']);
+        sectionRow.eachCell(cell => {
+          cell.font = { bold: true, size: 11 };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+        });
+
+        const stats = player.gameState.stats;
+        const hours = stats.hourlyUtilization.length;
+        for (let h = 0; h < hours; h++) {
+          hourlySheet.addRow([
+            player.name,
+            h + 1,
+            Number((stats.hourlyUtilization[h] * 100).toFixed(1)),
+            stats.hourlyQueueLength[h],
+            stats.hourlyDemand?.A?.[h] ?? '',
+            stats.hourlyDemand?.B?.[h] ?? '',
+            stats.hourlyDemand?.C?.[h] ?? '',
+            stats.hourlyAvailableCapacity?.A?.[h] ?? '',
+            stats.hourlyAvailableCapacity?.B?.[h] ?? '',
+            stats.hourlyAvailableCapacity?.C?.[h] ?? ''
+          ]);
+        }
+      });
+
+      hourlySheet.columns = [
+        { width: 20 }, { width: 8 }, { width: 12 }, { width: 14 },
+        { width: 10 }, { width: 10 }, { width: 10 },
+        { width: 12 }, { width: 12 }, { width: 12 }
+      ];
+      hourlySheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+      // ── Sheet 3: Patient Data ──
+      const patientSheet = workbook.addWorksheet('Patient Data');
+      const patientHeaders = ['Player', 'Patient ID', 'Type', 'Arrived Hour', 'Waiting Time', 'Mismatch', 'Status'];
+      const patientHeaderRow = patientSheet.addRow(patientHeaders);
+      patientHeaderRow.eachCell(cell => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } };
+        cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      });
+
+      const typeColors: Record<string, string> = { A: 'FFFEE2E2', B: 'FFFFFBEB', C: 'FFDBEAFE' };
+      const statusColors: Record<string, string> = { cardiac_arrest: 'FFDC2626', lwbs: 'FFF97316' };
+
+      sortedPlayers.forEach(player => {
+        const patients = player.gameState.completedPatients || [];
+        patients.forEach(p => {
+          const row = patientSheet.addRow([
+            player.name,
+            p.id,
+            p.type,
+            p.arrivedAt,
+            p.waitingTime,
+            p.treatedInMismatchRoom ? 'Yes' : 'No',
+            p.status
+          ]);
+
+          // Color by type
+          const bgColor = typeColors[p.type];
+          if (bgColor) {
+            row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bgColor.replace('FF', '') } };
+          }
+
+          // Color status cell for adverse outcomes
+          const statusColor = statusColors[p.status];
+          if (statusColor) {
+            row.getCell(7).font = { bold: true, color: { argb: statusColor } };
+          }
+        });
+      });
+
+      patientSheet.columns = [
+        { width: 20 }, { width: 16 }, { width: 8 }, { width: 14 },
+        { width: 14 }, { width: 10 }, { width: 16 }
+      ];
+      patientSheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+      // ── Sheet 4: Charts ──
+      if (resultsRef.current) {
+        const chartsSheet = workbook.addWorksheet('Charts');
+        const chartCards = Array.from(resultsRef.current.querySelectorAll('.chart-card')) as HTMLElement[];
+        let chartRow = 1;
+
+        for (const card of chartCards) {
+          const title = card.querySelector('h3')?.textContent || 'Chart';
+          const titleRow = chartsSheet.getRow(chartRow);
+          titleRow.getCell(1).value = title;
+          titleRow.getCell(1).font = { bold: true, size: 14 };
+          chartRow++;
+
+          try {
+            const restore = await prepareSvgsForCapture(card);
+            try {
+              const canvas = await html2canvas(card, {
+                scale: 2,
+                useCORS: true,
+                logging: false,
+                backgroundColor: '#ffffff'
+              });
+              const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+              const imgId = workbook.addImage({ base64: dataUrl.split(',')[1], extension: 'jpeg' });
+
+              // Calculate dimensions (max width ~700px in Excel ≈ 10 columns)
+              // Column width 14 ≈ 96px, default row height ≈ 20px, ratio = 96/20 = 4.8
+              const aspectRatio = canvas.height / canvas.width;
+              const imgWidthCols = 10;
+              const imgHeightRows = Math.ceil(imgWidthCols * aspectRatio * 4.8);
+
+              chartsSheet.addImage(imgId, {
+                tl: { col: 0, row: chartRow - 1, nativeCol: 0, nativeColOff: 0, nativeRow: chartRow - 1, nativeRowOff: 0 } as never,
+                br: { col: imgWidthCols, row: chartRow - 1 + imgHeightRows, nativeCol: imgWidthCols, nativeColOff: 0, nativeRow: chartRow - 1 + imgHeightRows, nativeRowOff: 0 } as never
+              } as never);
+              chartRow += imgHeightRows + 2;
+            } finally {
+              restore();
+            }
+          } catch {
+            // Skip chart if capture fails
+            chartRow += 2;
+          }
+        }
+
+        chartsSheet.columns = [
+          { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 },
+          { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 }, { width: 14 }
+        ];
+      }
+
+      // Generate and download
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `emergency-game-results-${session.code || 'export'}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error exporting Excel:', err);
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
+
+  // Inline computed styles onto SVG elements so they survive serialization
+  const inlineSvgStyles = (svg: SVGElement) => {
+    const styleProps = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'font-size', 'font-family', 'font-weight', 'text-anchor', 'dominant-baseline', 'opacity', 'visibility', 'display'];
+    const walk = (el: Element) => {
+      const computed = window.getComputedStyle(el);
+      for (const prop of styleProps) {
+        const val = computed.getPropertyValue(prop);
+        if (val) (el as HTMLElement).style.setProperty(prop, val);
+      }
+      for (const child of Array.from(el.children)) walk(child);
+    };
+    walk(svg);
+  };
+
+  // Convert a single SVG element to a canvas element with the same dimensions
+  const svgToCanvas = async (svg: SVGElement): Promise<HTMLCanvasElement> => {
+    inlineSvgStyles(svg);
+    const svgRect = svg.getBoundingClientRect();
+    const w = svgRect.width;
+    const h = svgRect.height;
+
+    // Clone SVG and set explicit width/height/viewBox so the serialized
+    // version renders at the exact same dimensions as the on-screen original
+    const clone = svg.cloneNode(true) as SVGElement;
+    clone.setAttribute('width', String(w));
+    clone.setAttribute('height', String(h));
+    if (!clone.getAttribute('viewBox')) {
+      clone.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    }
+
+    const serializer = new XMLSerializer();
+    const svgString = serializer.serializeToString(clone);
+    const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `emergency-game-results-${session?.code || 'export'}.csv`;
-    a.click();
+    const img = new Image();
+    img.width = w;
+    img.height = h;
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = reject;
+      img.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    canvas.width = w * 2;
+    canvas.height = h * 2;
+    canvas.style.width = `${w}px`;
+    canvas.style.height = `${h}px`;
+    const ctx = canvas.getContext('2d')!;
+    ctx.scale(2, 2);
+    ctx.drawImage(img, 0, 0, w, h);
     URL.revokeObjectURL(url);
+    return canvas;
+  };
+
+  // Replace all SVGs in a container with canvas elements; returns a restore function
+  const prepareSvgsForCapture = async (container: HTMLElement): Promise<() => void> => {
+    const svgs = Array.from(container.querySelectorAll('svg'));
+    const restorers: (() => void)[] = [];
+    for (const svg of svgs) {
+      try {
+        const canvas = await svgToCanvas(svg as SVGElement);
+        const parent = svg.parentElement!;
+        parent.insertBefore(canvas, svg);
+        svg.style.display = 'none';
+        restorers.push(() => {
+          svg.style.display = '';
+          parent.removeChild(canvas);
+        });
+      } catch {
+        // If conversion fails for one SVG, skip it
+      }
+    }
+    return () => restorers.forEach(r => r());
   };
 
   const handleExportPDF = async () => {
     if (!resultsRef.current) return;
 
     setIsExporting(true);
+
+    // Wait for reflow + ResponsiveContainer re-render at new width
+    await new Promise(r => setTimeout(r, 500));
+
     try {
-      const canvas = await html2canvas(resultsRef.current, {
-        scale: 2,
-        useCORS: true,
-        logging: false
-      });
-
-      const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF('p', 'mm', 'a4');
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      const pageW = 210;
+      const pageH = 297;
+      const margin = 15;
+      const contentW = pageW - margin * 2;
+      let cursorY = margin;
+      let pageNum = 1;
 
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      const addPageNumber = () => {
+        pdf.setFontSize(9);
+        pdf.setTextColor(150);
+        pdf.text(`Page ${pageNum}`, pageW / 2, pageH - 8, { align: 'center' });
+      };
+
+      const ensureSpace = (needed: number) => {
+        if (cursorY + needed > pageH - margin - 10) {
+          addPageNumber();
+          pdf.addPage();
+          pageNum++;
+          cursorY = margin;
+        }
+      };
+
+      // Capture a DOM element as an image and add it to the PDF,
+      // splitting across pages if the image is taller than available space
+      const captureAndAdd = async (el: HTMLElement) => {
+        const restore = await prepareSvgsForCapture(el);
+        try {
+          const canvas = await html2canvas(el, {
+            scale: 1.5,
+            useCORS: true,
+            logging: false,
+            backgroundColor: '#ffffff'
+          });
+          const imgW = contentW;
+          const fullImgH = (canvas.height * contentW) / canvas.width;
+          const maxSliceH = pageH - margin * 2 - 10; // max image height per page
+
+          if (fullImgH <= maxSliceH) {
+            // Fits on one page — use ensureSpace as before
+            const imgData = canvas.toDataURL('image/jpeg', 0.8);
+            ensureSpace(fullImgH);
+            pdf.addImage(imgData, 'JPEG', margin, cursorY, imgW, fullImgH);
+            cursorY += fullImgH + 8;
+          } else {
+            // Too tall — slice the canvas into page-sized strips
+            const pxPerMm = canvas.width / contentW;
+            let srcY = 0;
+
+            while (srcY < canvas.height) {
+              const availableMm = pageH - margin - 10 - cursorY;
+              const sliceHMm = Math.min(availableMm, maxSliceH);
+              const sliceHPx = Math.min(Math.round(sliceHMm * pxPerMm), canvas.height - srcY);
+
+              // Create a sub-canvas for this slice
+              const sliceCanvas = document.createElement('canvas');
+              sliceCanvas.width = canvas.width;
+              sliceCanvas.height = sliceHPx;
+              const ctx = sliceCanvas.getContext('2d')!;
+              ctx.drawImage(canvas, 0, srcY, canvas.width, sliceHPx, 0, 0, canvas.width, sliceHPx);
+
+              const sliceData = sliceCanvas.toDataURL('image/jpeg', 0.8);
+              const sliceImgH = (sliceHPx * contentW) / canvas.width;
+              pdf.addImage(sliceData, 'JPEG', margin, cursorY, imgW, sliceImgH);
+
+              srcY += sliceHPx;
+              cursorY += sliceImgH + 4;
+
+              // If there's more to draw, start a new page
+              if (srcY < canvas.height) {
+                addPageNumber();
+                pdf.addPage();
+                pageNum++;
+                cursorY = margin;
+              }
+            }
+            cursorY += 4; // extra spacing after a multi-page element
+          }
+        } finally {
+          restore();
+        }
+      };
+
+      // Title header
+      pdf.setFontSize(20);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text('Game Results', margin, cursorY + 7);
+      cursorY += 12;
+      pdf.setFontSize(12);
+      pdf.setTextColor(100, 116, 139);
+      pdf.text(`${session?.name || ''} — Code: ${session?.code || ''}`, margin, cursorY + 4);
+      cursorY += 12;
+
+      // Capture leaderboard in chunks that fit on pages
+      const leaderboard = resultsRef.current.querySelector('.leaderboard') as HTMLElement;
+      if (leaderboard) {
+        const tableHeader = leaderboard.querySelector('.table-header') as HTMLElement;
+        const tableRows = Array.from(leaderboard.querySelectorAll('.table-row')) as HTMLElement[];
+        const sectionTitle = leaderboard.querySelector('h2') as HTMLElement;
+        const exportWrapper = resultsRef.current.closest('.game-results') as HTMLElement;
+        const ROWS_PER_CHUNK = 20;
+
+        for (let idx = 0; idx < tableRows.length; idx += ROWS_PER_CHUNK) {
+          const isFirst = idx === 0;
+          const batch = tableRows.slice(idx, idx + ROWS_PER_CHUNK);
+
+          // Build a temporary container inside the .game-results.exporting
+          // wrapper so all export CSS overrides (e.g. .player-name) apply
+          const container = document.createElement('div');
+          container.className = 'results-section leaderboard';
+          container.style.position = 'absolute';
+          container.style.left = '-9999px';
+          container.style.top = '0';
+          container.style.width = `${leaderboard.offsetWidth}px`;
+
+          if (isFirst && sectionTitle) {
+            container.appendChild(sectionTitle.cloneNode(true));
+          }
+
+          const table = document.createElement('div');
+          table.className = 'leaderboard-table';
+          table.appendChild(tableHeader.cloneNode(true));
+          for (const row of batch) {
+            table.appendChild(row.cloneNode(true));
+          }
+          container.appendChild(table);
+          exportWrapper.appendChild(container);
+
+          try {
+            await captureAndAdd(container);
+          } finally {
+            exportWrapper.removeChild(container);
+          }
+        }
+      }
+
+      // Capture each chart card individually
+      const chartCards = Array.from(resultsRef.current.querySelectorAll('.chart-card')) as HTMLElement[];
+      for (const card of chartCards) {
+        await captureAndAdd(card);
+      }
+
+      addPageNumber();
       pdf.save(`emergency-game-results-${session?.code || 'export'}.pdf`);
     } catch (err) {
       console.error('Error exporting PDF:', err);
@@ -290,8 +730,21 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
   const trendWaitStaffing = showTrendLine
     ? linearRegression(scatterWaitVsStaffingData, 'staffingCost', 'waitingCosts') : [];
 
+  const costRevenueChartData = results.map(r => {
+    const params = session!.parameters;
+    return {
+      name: r.playerName,
+      'Staffing Cost': r.staffingCost,
+      'Waiting Cost': r.waitingCosts,
+      'Risk Event Cost': r.riskEventCosts,
+      'Revenue (Type A)': r.patientsTreated.A * params.revenuePerPatient.A,
+      'Revenue (Type B)': r.patientsTreated.B * params.revenuePerPatient.B,
+      'Revenue (Type C)': r.patientsTreated.C * params.revenuePerPatient.C,
+    };
+  });
+
   return (
-    <div className="game-results">
+    <div className={`game-results${isExporting ? ' exporting' : ''}`}>
       <header className="results-header">
         <div className="header-left">
           {!playerId && (
@@ -305,8 +758,8 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
         <div className="header-actions">
           {!playerId ? (
             <>
-              <Button variant="secondary" onClick={handleDownloadData}>
-                Download Data (CSV)
+              <Button variant="secondary" onClick={handleDownloadExcel} loading={isExportingExcel}>
+                Download Excel
               </Button>
               <Button variant="primary" onClick={handleExportPDF} loading={isExporting}>
                 Export PDF
@@ -369,10 +822,10 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
           <div className="chart-card">
             <h3>Utilization vs Queue Length</h3>
             <ResponsiveContainer width="100%" height={300}>
-              <ComposedChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+              <ComposedChart margin={{ top: 10, right: 20, bottom: 40, left: 30 }}>
                 <CartesianGrid />
-                <XAxis type="number" dataKey="x" name="Utilization" unit="%" />
-                <YAxis type="number" dataKey="y" name="Queue Length" />
+                <XAxis type="number" dataKey="x" name="Utilization" unit="%" domain={['auto', 'auto']} label={{ value: 'Utilization (%)', position: 'insideBottomRight', offset: -5, style: { fontSize: 11, fill: '#64748b' } }} />
+                <YAxis type="number" dataKey="y" name="Queue Length" domain={['auto', 'auto']} label={{ value: 'Avg Queue Length', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 11, fill: '#64748b', textAnchor: 'middle' } }} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter name="Players" data={scatterUtilQueueData.map(d => ({ ...d, x: d.utilization, y: d.queueLength }))} fill="#3b82f6" />
                 {showTrendLine && (
@@ -386,10 +839,10 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
           <div className="chart-card">
             <h3>Utilization vs Profit</h3>
             <ResponsiveContainer width="100%" height={300}>
-              <ComposedChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+              <ComposedChart margin={{ top: 10, right: 20, bottom: 40, left: 30 }}>
                 <CartesianGrid />
-                <XAxis type="number" dataKey="x" name="Utilization" unit="%" />
-                <YAxis type="number" dataKey="y" name="Profit" />
+                <XAxis type="number" dataKey="x" name="Utilization" unit="%" domain={['auto', 'auto']} label={{ value: 'Utilization (%)', position: 'insideBottomRight', offset: -5, style: { fontSize: 11, fill: '#64748b' } }} />
+                <YAxis type="number" dataKey="y" name="Profit" domain={['auto', 'auto']} tickFormatter={formatCompact} label={{ value: 'Profit', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 11, fill: '#64748b', textAnchor: 'middle' } }} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter name="Players" data={scatterUtilProfitData.map(d => ({ ...d, x: d.utilization, y: d.profit }))} fill="#22c55e" />
                 {showTrendLine && (
@@ -403,10 +856,10 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
           <div className="chart-card">
             <h3>Mismatch % vs Profit</h3>
             <ResponsiveContainer width="100%" height={300}>
-              <ComposedChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+              <ComposedChart margin={{ top: 10, right: 20, bottom: 40, left: 30 }}>
                 <CartesianGrid />
-                <XAxis type="number" dataKey="x" name="Mismatch" unit="%" />
-                <YAxis type="number" dataKey="y" name="Profit" />
+                <XAxis type="number" dataKey="x" name="Mismatch" unit="%" domain={['auto', 'auto']} label={{ value: 'Mismatch (%)', position: 'insideBottomRight', offset: -5, style: { fontSize: 11, fill: '#64748b' } }} />
+                <YAxis type="number" dataKey="y" name="Profit" domain={['auto', 'auto']} tickFormatter={formatCompact} label={{ value: 'Profit', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 11, fill: '#64748b', textAnchor: 'middle' } }} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter name="Players" data={scatterMismatchProfitData.map(d => ({ ...d, x: d.mismatch, y: d.profit }))} fill="#f59e0b" />
                 {showTrendLine && (
@@ -420,10 +873,10 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
           <div className="chart-card">
             <h3>Wait Cost vs Staffing Cost</h3>
             <ResponsiveContainer width="100%" height={300}>
-              <ComposedChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+              <ComposedChart margin={{ top: 10, right: 20, bottom: 40, left: 30 }}>
                 <CartesianGrid />
-                <XAxis type="number" dataKey="x" name="Staffing Cost" />
-                <YAxis type="number" dataKey="y" name="Wait Cost" />
+                <XAxis type="number" dataKey="x" name="Staffing Cost" domain={['auto', 'auto']} tickFormatter={formatCompact} label={{ value: 'Staffing Cost', position: 'insideBottomRight', offset: -5, style: { fontSize: 11, fill: '#64748b' } }} />
+                <YAxis type="number" dataKey="y" name="Wait Cost" domain={['auto', 'auto']} tickFormatter={formatCompact} label={{ value: 'Wait Cost', angle: -90, position: 'insideLeft', offset: 10, style: { fontSize: 11, fill: '#64748b', textAnchor: 'middle' } }} />
                 <Tooltip cursor={{ strokeDasharray: '3 3' }} />
                 <Scatter name="Players" data={scatterWaitVsStaffingData.map(d => ({ ...d, x: d.staffingCost, y: d.waitingCosts }))} fill="#8b5cf6" />
                 {showTrendLine && (
@@ -440,10 +893,10 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
               <BarChart
                 data={staffingChartData}
                 layout="vertical"
-                margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                margin={{ top: 20, right: 30, left: 20, bottom: 35 }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" allowDecimals={false} />
+                <XAxis type="number" allowDecimals={false} label={{ value: 'Number of Rooms', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#64748b' } }} />
                 <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Legend />
@@ -461,16 +914,40 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
               <BarChart
                 data={riskEventsChartData}
                 layout="vertical"
-                margin={{ top: 20, right: 30, left: 20, bottom: 20 }}
+                margin={{ top: 20, right: 30, left: 20, bottom: 35 }}
               >
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis type="number" allowDecimals={false} />
+                <XAxis type="number" allowDecimals={false} label={{ value: 'Number of Events', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#64748b' } }} />
                 <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 12 }} />
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="Type A (Cardiac Arrest)" stackId="events" fill="#dc2626" />
                 <Bar dataKey="Type B (LWBS)" stackId="events" fill="#eab308" />
                 <Bar dataKey="Type C (LWBS)" stackId="events" fill="#2563eb" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Cost & Revenue Breakdown (ordered by profit) */}
+          <div className="chart-card wide">
+            <h3>Cost & Revenue Breakdown (Ordered by Profit)</h3>
+            <ResponsiveContainer width="100%" height={Math.max(150, costRevenueChartData.length * 50 + 60)}>
+              <BarChart
+                data={costRevenueChartData}
+                layout="vertical"
+                margin={{ top: 20, right: 30, left: 20, bottom: 35 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis type="number" tickFormatter={(v: number) => formatCurrency(v)} label={{ value: 'Amount ($)', position: 'insideBottom', offset: -5, style: { fontSize: 12, fill: '#64748b' } }} />
+                <YAxis type="category" dataKey="name" width={100} tick={{ fontSize: 12 }} />
+                <Tooltip formatter={(value: number) => formatCurrency(value)} />
+                <Legend />
+                <Bar dataKey="Staffing Cost" stackId="cost" fill="#475569" />
+                <Bar dataKey="Waiting Cost" stackId="cost" fill="#f59e0b" />
+                <Bar dataKey="Risk Event Cost" stackId="cost" fill="#dc2626" />
+                <Bar dataKey="Revenue (Type A)" stackId="revenue" fill="#ef4444" />
+                <Bar dataKey="Revenue (Type B)" stackId="revenue" fill="#eab308" />
+                <Bar dataKey="Revenue (Type C)" stackId="revenue" fill="#2563eb" />
               </BarChart>
             </ResponsiveContainer>
           </div>
