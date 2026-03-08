@@ -722,6 +722,29 @@ export function SessionMonitor() {
           </div>
         </div>
 
+        {session.status === 'sequencing' && !session.asyncMode && (
+          <div className="arrivals-section">
+            <h2>Current Hour Arrivals</h2>
+            <div className="arrivals-display">
+              {session.arrivals[session.currentHour - 1] && (
+                <>
+                  <div className="arrival-item type-a">
+                    <span className="arrival-count">{session.arrivals[session.currentHour - 1].A}</span>
+                    <span className="arrival-label">Type A</span>
+                  </div>
+                  <div className="arrival-item type-b">
+                    <span className="arrival-count">{session.arrivals[session.currentHour - 1].B}</span>
+                    <span className="arrival-label">Type B</span>
+                  </div>
+                  <div className="arrival-item type-c">
+                    <span className="arrival-count">{session.arrivals[session.currentHour - 1].C}</span>
+                    <span className="arrival-label">Type C</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
         <div className="players-section">
           <div className="section-header">
             <h2>Players ({players.length})</h2>
@@ -822,29 +845,7 @@ export function SessionMonitor() {
           </div>
         </div>
 
-        {session.status === 'sequencing' && !session.asyncMode && (
-          <div className="arrivals-section">
-            <h2>Current Hour Arrivals</h2>
-            <div className="arrivals-display">
-              {session.arrivals[session.currentHour - 1] && (
-                <>
-                  <div className="arrival-item type-a">
-                    <span className="arrival-count">{session.arrivals[session.currentHour - 1].A}</span>
-                    <span className="arrival-label">Type A</span>
-                  </div>
-                  <div className="arrival-item type-b">
-                    <span className="arrival-count">{session.arrivals[session.currentHour - 1].B}</span>
-                    <span className="arrival-label">Type B</span>
-                  </div>
-                  <div className="arrival-item type-c">
-                    <span className="arrival-count">{session.arrivals[session.currentHour - 1].C}</span>
-                    <span className="arrival-label">Type C</span>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        )}
+
 
       </div>
 
@@ -885,3 +886,4 @@ export function SessionMonitor() {
     </div>
   );
 }
+

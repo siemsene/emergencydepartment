@@ -179,6 +179,7 @@ export function initializePlayerGameState(): PlayerGameState {
     lastTreatmentHour: 0,
     lastSequencingHour: 0,
     stateVersion: 0,
+    lastReadyEpoch: -1,
     stats: initializePlayerStats(),
     turnEvents: {
       arrived: { A: 0, B: 0, C: 0 },
@@ -283,3 +284,5 @@ export function validateHourlyWeights(weights: { A: number[]; B: number[]; C: nu
     return Math.abs(sum - 1) < 0.05; // Allow 5% tolerance
   });
 }
+
+

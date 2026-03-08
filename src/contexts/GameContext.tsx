@@ -1,21 +1,17 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
 import { flushSync } from 'react-dom';
-import { Session, Player, PlayerGameState, Patient, Room, PatientType, RoomType, HourlyArrivals } from '../types';
+import { Session, Player, PlayerGameState, Patient, PatientType, RoomType, HourlyArrivals } from '../types';
 import {
   subscribeToSession,
   subscribeToPlayer,
   updatePlayerGameState,
   updatePlayerGameStateFields,
-  getSession,
-  advanceSessionHour,
-  getSessionPlayers
+  markReadyAndMaybeAdvance
 } from '../services/firebaseService';
 import {
   createPatient,
   createRoom,
-  rollD20,
-  isRiskEvent,
-  getTreatmentTime,
+  rollD20,  getTreatmentTime,
   calculateStaffingCost,
   calculateUtilization,
   isMismatchRoom,
@@ -130,6 +126,9 @@ export function GameProvider({ children }: { children: ReactNode }) {
           localVersionRef.current = incomingVersion;
           return updatedPlayer.gameState;
         });
+      } else {
+        setPlayer(null);
+        setGameState(null);
       }
     });
 
@@ -142,70 +141,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
       setGameState(player.gameState);
     }
   }, [player, gameState]);
-
-  // Auto-advance session when player is ready and waiting
-  // This ensures the game progresses even without the instructor dashboard open
-  useEffect(() => {
-    if (!session || !gameState || !player?.id) return;
-    // In async mode, players advance themselves — no session-level auto-advance needed
-    if (session.asyncMode) return;
-    if (session.status !== 'sequencing') return;
-    if (gameState.currentPhase !== 'waiting') return;
-    if (!gameState.hourComplete) return;
-
-    const lastCompletedHour = gameState.lastCompletedHour ?? 0;
-    if (lastCompletedHour < session.currentHour) return;
-
-    // IMPORTANT: Don't auto-advance if arrivals haven't been processed for this hour.
-    // This prevents advancing when the player is still in 'waiting' from the previous hour.
-    const lastArrivalsHour = gameState.lastArrivalsHour ?? 0;
-    if (lastArrivalsHour < session.currentHour) return;
-
-    // Add a delay to allow SessionMonitor to advance first (if it's running)
-    // and to check that all players are ready
-    const timeoutId = setTimeout(async () => {
-      try {
-        // Re-fetch session to check current state
-        const currentSession = await getSession(session.id);
-        if (!currentSession || currentSession.status !== 'sequencing') return;
-        if (currentSession.currentHour !== session.currentHour) return; // Already advanced
-
-        // Check if all players are ready (must have processed arrivals AND completed the hour)
-        const allPlayers = await getSessionPlayers(session.id);
-        const allReady = allPlayers.every(p => {
-          const pLastCompleted = p.gameState.lastCompletedHour ?? 0;
-          const pLastArrivals = p.gameState.lastArrivalsHour ?? 0;
-          const pLastTreatment = p.gameState.lastTreatmentHour ?? 0;
-          // Player must have processed arrivals and treatment for this hour
-          return p.gameState.currentPhase === 'waiting' &&
-            p.gameState.hourComplete &&
-            pLastCompleted >= currentSession.currentHour &&
-            pLastArrivals >= currentSession.currentHour &&
-            pLastTreatment >= currentSession.currentHour;
-        });
-
-        if (allReady) {
-          if (import.meta.env.DEV) console.log('All players ready, advancing session to hour', currentSession.currentHour + 1);
-          await advanceSessionHour(session.id, currentSession.currentHour + 1);
-        }
-      } catch (error) {
-        console.error('Error in auto-advance:', error);
-      }
-    }, 2000); // 2 second delay to let SessionMonitor handle it first
-
-    return () => clearTimeout(timeoutId);
-  }, [
-    session?.id,
-    session?.status,
-    session?.currentHour,
-    gameState?.currentPhase,
-    gameState?.hourComplete,
-    gameState?.lastCompletedHour,
-    gameState?.lastArrivalsHour,
-    gameState?.lastArrivalsHour,
-    player?.id
-  ]);
-
   const syncGameState = useCallback(async () => {
     if (!player?.id || !gameState) return;
     await updatePlayerGameState(player.id, gameState);
@@ -282,10 +217,12 @@ export function GameProvider({ children }: { children: ReactNode }) {
         ...gameState,
         staffingComplete: true,
         totalCost: gameState.staffingCost,
-        hourComplete: true
+        hourComplete: true,
+        lastReadyEpoch: (session.syncEpoch ?? 0) - 1
       });
       setGameState(newState);
       await updatePlayerGameState(player.id, newState);
+      await markReadyAndMaybeAdvance(session.id, player.id, 'staffing', 0, session.syncEpoch);
     }
   }, [gameState, player?.id, session, withVersion]);
 
@@ -323,6 +260,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       });
       setGameState(newState);
       await updatePlayerGameState(player.id, newState);
+      await markReadyAndMaybeAdvance(session.id, player.id, 'turn', session.currentHour, session.syncEpoch);
     }
   }, [gameState, player?.id, session, withVersion]);
 
@@ -845,3 +783,14 @@ export function useGame() {
   }
   return context;
 }
+
+
+
+
+
+
+
+
+
+
+

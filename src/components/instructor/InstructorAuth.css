@@ -73,15 +73,18 @@
   margin-top: 0.5rem;
 }
 
-.auth-links button {
+.auth-links button,
+.auth-links a {
   background: none;
   border: none;
   color: #3b82f6;
   cursor: pointer;
   font-size: 0.875rem;
+  text-decoration: none;
 }
 
-.auth-links button:hover {
+.auth-links button:hover,
+.auth-links a:hover {
   text-decoration: underline;
 }
 
@@ -119,3 +122,4 @@
 .player-link a:hover {
   text-decoration: underline;
 }
+

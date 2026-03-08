@@ -67,6 +67,11 @@ export interface Session {
   parameters: GameParameters;
   arrivals: HourlyArrivals[];
   players: string[];
+  maxPlayers: number;
+  playerCount: number;
+  staffingReadyCount: number;
+  turnReadyCount: number;
+  syncEpoch: number;
   usePregenerated: boolean;
   asyncMode?: boolean;
   pauseAfterTurn?: boolean;
@@ -111,6 +116,7 @@ export interface PlayerGameState {
   lastSequencingHour: number; // Track which hour sequencing was submitted
   currentHour: number; // Player's own hour (used in async mode; mirrors session.currentHour in sync)
   stateVersion: number; // Monotonically increasing counter for optimistic concurrency
+  lastReadyEpoch: number; // Idempotency marker for session-level ready aggregation
   stats: PlayerStats;
   turnEvents: TurnEvents;
 }
@@ -175,3 +181,4 @@ export interface SessionResults {
   arrivals: HourlyArrivals[];
   parameters: GameParameters;
 }
+

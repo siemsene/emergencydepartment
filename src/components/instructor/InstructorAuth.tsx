@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../contexts/AuthContext';
 import { Input } from '../shared/Input';
@@ -11,8 +11,11 @@ type AuthMode = 'login' | 'register' | 'forgot';
 
 export function InstructorAuth() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login, register, resetUserPassword } = useAuth();
-  const [mode, setMode] = useState<AuthMode>('login');
+  const [mode, setMode] = useState<AuthMode>(() =>
+    searchParams.get('mode') === 'register' ? 'register' : 'login'
+  );
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -21,6 +24,12 @@ export function InstructorAuth() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get('mode') === 'register') {
+      setMode('register');
+    }
+  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -144,9 +153,9 @@ export function InstructorAuth() {
                 <button type="button" onClick={() => setMode('forgot')}>
                   Forgot password?
                 </button>
-                <button type="button" onClick={() => setMode('register')}>
-                  Create an account
-                </button>
+                <Link to="/instructor/login?mode=register">
+                  Request an instructor account
+                </Link>
               </div>
             </motion.form>
           )}

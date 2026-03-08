@@ -18,11 +18,17 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
-      className={`btn btn-${variant} btn-${size} ${className}`}
+      className={`btn btn-${variant} btn-${size}${loading ? ' btn-loading' : ''} ${className}`}
       disabled={disabled || loading}
+      aria-busy={loading}
       {...props}
     >
-      {loading ? <span className="btn-spinner" /> : children}
+      <span className="btn-content">{children}</span>
+      {loading && (
+        <span className="btn-spinner-overlay" aria-hidden="true">
+          <span className="btn-spinner" />
+        </span>
+      )}
     </button>
   );
 }

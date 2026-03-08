@@ -8,14 +8,15 @@ import {
   deleteDoc,
   query,
   where,
-  orderBy,
   onSnapshot,
   Timestamp,
   serverTimestamp,
   writeBatch,
   arrayUnion,
   runTransaction,
-  limit
+  limit,
+  increment,
+  DocumentReference
 } from 'firebase/firestore';
 import {
   createUserWithEmailAndPassword,
@@ -26,10 +27,139 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import { db, auth } from '../config/firebase';
-import { Instructor, Session, Player, PlayerGameState, GameParameters, HourlyArrivals } from '../types';
+import {
+  Instructor,
+  Session,
+  Player,
+  PlayerGameState,
+  PlayerStats,
+  GameParameters,
+  HourlyArrivals
+} from '../types';
 import { generateSessionCode, initializePlayerGameState } from '../utils/gameUtils';
 import { DEFAULT_PARAMETERS } from '../data/gameConstants';
 import { notifyAdminNewInstructor } from './emailService';
+
+const DEFAULT_MAX_PLAYERS = 150;
+
+type ReadyPhase = 'staffing' | 'turn';
+
+interface ReadyAdvanceResult {
+  advanced: boolean;
+  stale?: boolean;
+  status?: Session['status'];
+  currentHour?: number;
+}
+
+function normalizePlayerName(name: string): string {
+  return name.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function getRosterLockId(name: string): string {
+  const normalized = normalizePlayerName(name)
+    .replace(/[^a-z0-9_-]/g, '_')
+    .slice(0, 80);
+  return normalized || 'player';
+}
+
+function mergePlayerGameState(raw: Partial<PlayerGameState> | undefined): PlayerGameState {
+  const base = initializePlayerGameState();
+  const incoming = raw ?? {};
+  const incomingStats = (incoming.stats ?? {}) as Partial<PlayerStats>;
+
+  return {
+    ...base,
+    ...incoming,
+    stats: {
+      ...base.stats,
+      ...incomingStats,
+      patientsTreated: {
+        ...base.stats.patientsTreated,
+        ...(incomingStats.patientsTreated ?? {})
+      },
+      lwbs: {
+        ...base.stats.lwbs,
+        ...(incomingStats.lwbs ?? {})
+      },
+      turnedAway: {
+        ...base.stats.turnedAway,
+        ...(incomingStats.turnedAway ?? {})
+      },
+      hourlyDemand: {
+        ...base.stats.hourlyDemand,
+        ...(incomingStats.hourlyDemand ?? {})
+      },
+      hourlyAvailableCapacity: {
+        ...base.stats.hourlyAvailableCapacity,
+        ...(incomingStats.hourlyAvailableCapacity ?? {})
+      },
+      maxWaitingTime: {
+        ...base.stats.maxWaitingTime,
+        ...(incomingStats.maxWaitingTime ?? {})
+      }
+    },
+    turnEvents: {
+      ...base.turnEvents,
+      ...(incoming.turnEvents ?? {}),
+      arrived: {
+        ...base.turnEvents.arrived,
+        ...(incoming.turnEvents?.arrived ?? {})
+      },
+      turnedAway: {
+        ...base.turnEvents.turnedAway,
+        ...(incoming.turnEvents?.turnedAway ?? {})
+      }
+    },
+    lastReadyEpoch: incoming.lastReadyEpoch ?? -1
+  };
+}
+
+function mapSessionFromSnapshot(id: string, data: Record<string, any>): Session {
+  return {
+    id,
+    ...data,
+    createdAt: data.createdAt?.toDate() || new Date(),
+    startedAt: data.startedAt?.toDate(),
+    endedAt: data.endedAt?.toDate(),
+    expiresAt: data.expiresAt?.toDate() || new Date(),
+    players: Array.isArray(data.players) ? data.players : [],
+    maxPlayers: Number(data.maxPlayers ?? DEFAULT_MAX_PLAYERS),
+    playerCount: Number(data.playerCount ?? (Array.isArray(data.players) ? data.players.length : 0)),
+    staffingReadyCount: Number(data.staffingReadyCount ?? 0),
+    turnReadyCount: Number(data.turnReadyCount ?? 0),
+    syncEpoch: Number(data.syncEpoch ?? 0)
+  } as Session;
+}
+
+function mapPlayerFromSnapshot(id: string, data: Record<string, any>): Player {
+  return {
+    id,
+    ...data,
+    joinedAt: data.joinedAt?.toDate() || new Date(),
+    lastSeen: data.lastSeen?.toDate() || new Date(),
+    gameState: mergePlayerGameState(data.gameState)
+  } as Player;
+}
+
+async function deleteRefsInBatches(refs: DocumentReference[]): Promise<void> {
+  let batch = writeBatch(db);
+  let pending = 0;
+
+  for (const ref of refs) {
+    batch.delete(ref);
+    pending += 1;
+
+    if (pending >= 450) {
+      await batch.commit();
+      batch = writeBatch(db);
+      pending = 0;
+    }
+  }
+
+  if (pending > 0) {
+    await batch.commit();
+  }
+}
 
 // Auth Functions
 export function subscribeToAuthChanges(callback: (user: FirebaseUser | null) => void) {
@@ -97,10 +227,10 @@ export async function getInstructor(userId: string): Promise<Instructor | null> 
 
 export async function getAllInstructors(): Promise<Instructor[]> {
   const querySnapshot = await getDocs(collection(db, 'instructors'));
-  return querySnapshot.docs.map(doc => {
-    const data = doc.data();
+  return querySnapshot.docs.map((docSnap) => {
+    const data = docSnap.data();
     return {
-      id: doc.id,
+      id: docSnap.id,
       ...data,
       createdAt: data.createdAt?.toDate() || new Date(),
       approvedAt: data.approvedAt?.toDate(),
@@ -158,6 +288,11 @@ export async function createSession(
     parameters,
     arrivals: [],
     players: [],
+    maxPlayers: DEFAULT_MAX_PLAYERS,
+    playerCount: 0,
+    staffingReadyCount: 0,
+    turnReadyCount: 0,
+    syncEpoch: 0,
     usePregenerated: false,
     asyncMode: false
   };
@@ -168,10 +303,8 @@ export async function createSession(
     expiresAt: Timestamp.fromDate(expiresAt)
   });
 
-  // Update instructor session count
-  const currentSessionsCreated = (await getInstructor(instructorId))?.sessionsCreated ?? 0;
   await updateDoc(doc(db, 'instructors', instructorId), {
-    sessionsCreated: currentSessionsCreated + 1,
+    sessionsCreated: increment(1),
     lastActive: serverTimestamp()
   });
 
@@ -181,36 +314,18 @@ export async function createSession(
 export async function getSession(sessionId: string): Promise<Session | null> {
   const docRef = doc(db, 'sessions', sessionId);
   const docSnap = await getDoc(docRef);
-  if (docSnap.exists()) {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      ...data,
-      createdAt: data.createdAt?.toDate() || new Date(),
-      startedAt: data.startedAt?.toDate(),
-      endedAt: data.endedAt?.toDate(),
-      expiresAt: data.expiresAt?.toDate() || new Date()
-    } as Session;
-  }
-  return null;
+  if (!docSnap.exists()) return null;
+
+  return mapSessionFromSnapshot(docSnap.id, docSnap.data());
 }
 
 export async function getSessionByCode(code: string): Promise<Session | null> {
   const q = query(collection(db, 'sessions'), where('code', '==', code.toUpperCase()), limit(1));
   const querySnapshot = await getDocs(q);
-  if (!querySnapshot.empty) {
-    const doc = querySnapshot.docs[0];
-    const data = doc.data();
-    return {
-      id: doc.id,
-      ...data,
-      createdAt: data.createdAt?.toDate() || new Date(),
-      startedAt: data.startedAt?.toDate(),
-      endedAt: data.endedAt?.toDate(),
-      expiresAt: data.expiresAt?.toDate() || new Date()
-    } as Session;
-  }
-  return null;
+  if (querySnapshot.empty) return null;
+
+  const docSnap = querySnapshot.docs[0];
+  return mapSessionFromSnapshot(docSnap.id, docSnap.data());
 }
 
 export async function getInstructorSessions(instructorId: string): Promise<Session[]> {
@@ -219,17 +334,7 @@ export async function getInstructorSessions(instructorId: string): Promise<Sessi
     where('instructorId', '==', instructorId)
   );
   const querySnapshot = await getDocs(q);
-  const sessions = querySnapshot.docs.map(doc => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      ...data,
-      createdAt: data.createdAt?.toDate() || new Date(),
-      startedAt: data.startedAt?.toDate(),
-      endedAt: data.endedAt?.toDate(),
-      expiresAt: data.expiresAt?.toDate() || new Date()
-    } as Session;
-  });
+  const sessions = querySnapshot.docs.map((docSnap) => mapSessionFromSnapshot(docSnap.id, docSnap.data()));
   sessions.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
   return sessions;
 }
@@ -250,20 +355,39 @@ export async function startSession(sessionId: string, asyncMode?: boolean) {
       status: 'sequencing',
       currentHour: 1,
       asyncMode: true,
+      staffingReadyCount: 0,
+      turnReadyCount: 0,
+      syncEpoch: 1,
       startedAt: serverTimestamp()
     });
   } else {
     await updateDoc(doc(db, 'sessions', sessionId), {
       status: 'staffing',
+      currentHour: 0,
+      asyncMode: false,
+      staffingReadyCount: 0,
+      turnReadyCount: 0,
+      syncEpoch: 1,
       startedAt: serverTimestamp()
     });
   }
 }
 
 export async function advanceSessionToSequencing(sessionId: string) {
-  await updateDoc(doc(db, 'sessions', sessionId), {
-    status: 'sequencing',
-    currentHour: 1
+  await runTransaction(db, async (transaction) => {
+    const sessionRef = doc(db, 'sessions', sessionId);
+    const sessionSnap = await transaction.get(sessionRef);
+    if (!sessionSnap.exists()) return;
+
+    const data = sessionSnap.data();
+    const nextEpoch = Number(data.syncEpoch ?? 0) + 1;
+
+    transaction.update(sessionRef, {
+      status: 'sequencing',
+      currentHour: 1,
+      turnReadyCount: 0,
+      syncEpoch: nextEpoch
+    });
   });
 }
 
@@ -274,7 +398,9 @@ export async function advanceSessionHour(sessionId: string, newHour: number) {
     const sessionSnap = await transaction.get(sessionRef);
     if (!sessionSnap.exists()) return;
 
-    const currentHour = sessionSnap.data().currentHour ?? 0;
+    const sessionData = sessionSnap.data();
+    const currentHour = Number(sessionData.currentHour ?? 0);
+    const nextEpoch = Number(sessionData.syncEpoch ?? 0) + 1;
 
     // Only advance if newHour is exactly currentHour + 1 (prevents double-advances)
     if (newHour !== currentHour + 1 && newHour <= 24) return;
@@ -285,18 +411,152 @@ export async function advanceSessionHour(sessionId: string, newHour: number) {
       transaction.update(sessionRef, {
         status: 'completed',
         currentHour: 24,
+        turnReadyCount: 0,
+        syncEpoch: nextEpoch,
         endedAt: serverTimestamp()
       });
-    } else if (sessionSnap.data().pauseAfterTurn) {
+    } else if (sessionData.pauseAfterTurn) {
       transaction.update(sessionRef, {
         status: 'paused',
-        pauseAfterTurn: false
+        pauseAfterTurn: false,
+        turnReadyCount: 0,
+        syncEpoch: nextEpoch
       });
     } else {
       transaction.update(sessionRef, {
-        currentHour: newHour
+        currentHour: newHour,
+        turnReadyCount: 0,
+        syncEpoch: nextEpoch
       });
     }
+  });
+}
+
+export async function markReadyAndMaybeAdvance(
+  sessionId: string,
+  playerId: string,
+  phase: ReadyPhase,
+  hour: number,
+  epoch?: number
+): Promise<ReadyAdvanceResult> {
+  return runTransaction(db, async (transaction): Promise<ReadyAdvanceResult> => {
+    const sessionRef = doc(db, 'sessions', sessionId);
+    const playerRef = doc(db, 'players', playerId);
+
+    const [sessionSnap, playerSnap] = await Promise.all([
+      transaction.get(sessionRef),
+      transaction.get(playerRef)
+    ]);
+
+    if (!sessionSnap.exists() || !playerSnap.exists()) return { advanced: false };
+
+    const sessionData = sessionSnap.data();
+    const playerData = playerSnap.data();
+
+    if (sessionData.asyncMode) return { advanced: false };
+
+    const sessionEpoch = Number(sessionData.syncEpoch ?? 0);
+    if (typeof epoch === 'number' && epoch !== sessionEpoch) {
+      return { advanced: false, stale: true, status: sessionData.status, currentHour: Number(sessionData.currentHour ?? 0) };
+    }
+
+    const playerCount = Number(sessionData.playerCount ?? (Array.isArray(sessionData.players) ? sessionData.players.length : 0));
+    if (playerCount <= 0) {
+      return { advanced: false, status: sessionData.status, currentHour: Number(sessionData.currentHour ?? 0) };
+    }
+
+    const playerLastReadyEpoch = Number(playerData.gameState?.lastReadyEpoch ?? -1);
+    if (playerLastReadyEpoch === sessionEpoch) {
+      return { advanced: false, status: sessionData.status, currentHour: Number(sessionData.currentHour ?? 0) };
+    }
+
+    const basePlayerUpdate = { 'gameState.lastReadyEpoch': sessionEpoch } as Record<string, unknown>;
+
+    if (phase === 'staffing') {
+      if (sessionData.status !== 'staffing') {
+        return { advanced: false, stale: true, status: sessionData.status, currentHour: Number(sessionData.currentHour ?? 0) };
+      }
+      if (!playerData.gameState?.staffingComplete) {
+        return { advanced: false, status: sessionData.status, currentHour: Number(sessionData.currentHour ?? 0) };
+      }
+
+      const readyCount = Math.min(playerCount, Number(sessionData.staffingReadyCount ?? 0) + 1);
+      transaction.update(playerRef, basePlayerUpdate);
+
+      if (readyCount >= playerCount) {
+        const nextEpoch = sessionEpoch + 1;
+        transaction.update(sessionRef, {
+          staffingReadyCount: readyCount,
+          turnReadyCount: 0,
+          status: 'sequencing',
+          currentHour: 1,
+          syncEpoch: nextEpoch
+        });
+        return { advanced: true, status: 'sequencing', currentHour: 1 };
+      }
+
+      transaction.update(sessionRef, {
+        staffingReadyCount: readyCount
+      });
+      return { advanced: false, status: sessionData.status, currentHour: Number(sessionData.currentHour ?? 0) };
+    }
+
+    if (sessionData.status !== 'sequencing') {
+      return { advanced: false, stale: true, status: sessionData.status, currentHour: Number(sessionData.currentHour ?? 0) };
+    }
+
+    const currentHour = Number(sessionData.currentHour ?? 0);
+    if (hour !== currentHour) {
+      return { advanced: false, stale: true, status: sessionData.status, currentHour };
+    }
+
+    const playerLastCompleted = Number(playerData.gameState?.lastCompletedHour ?? 0);
+    const playerHourComplete = Boolean(playerData.gameState?.hourComplete);
+    if (!playerHourComplete || playerLastCompleted < currentHour) {
+      return { advanced: false, status: sessionData.status, currentHour };
+    }
+
+    const readyCount = Math.min(playerCount, Number(sessionData.turnReadyCount ?? 0) + 1);
+    transaction.update(playerRef, basePlayerUpdate);
+
+    if (readyCount >= playerCount) {
+      const nextEpoch = sessionEpoch + 1;
+
+      if (currentHour >= 24) {
+        transaction.update(sessionRef, {
+          status: 'completed',
+          currentHour: 24,
+          turnReadyCount: 0,
+          syncEpoch: nextEpoch,
+          endedAt: serverTimestamp()
+        });
+        return { advanced: true, status: 'completed', currentHour: 24 };
+      }
+
+      if (sessionData.pauseAfterTurn) {
+        transaction.update(sessionRef, {
+          status: 'paused',
+          pauseAfterTurn: false,
+          turnReadyCount: 0,
+          syncEpoch: nextEpoch
+        });
+        return { advanced: true, status: 'paused', currentHour };
+      }
+
+      const nextHour = currentHour + 1;
+      transaction.update(sessionRef, {
+        currentHour: nextHour,
+        turnReadyCount: 0,
+        syncEpoch: nextEpoch
+      });
+      return { advanced: true, status: 'sequencing', currentHour: nextHour };
+    }
+
+    transaction.update(sessionRef, {
+      turnReadyCount: readyCount
+    });
+
+    return { advanced: false, status: sessionData.status, currentHour };
   });
 }
 
@@ -325,37 +585,44 @@ export async function resumeSession(sessionId: string) {
     const sessionSnap = await transaction.get(sessionRef);
     if (!sessionSnap.exists()) return;
 
-    const currentHour = sessionSnap.data().currentHour ?? 0;
+    const sessionData = sessionSnap.data();
+    const currentHour = Number(sessionData.currentHour ?? 0);
     const newHour = currentHour + 1;
+    const nextEpoch = Number(sessionData.syncEpoch ?? 0) + 1;
 
     if (newHour > 24) {
       transaction.update(sessionRef, {
         status: 'completed',
         currentHour: 24,
-        endedAt: serverTimestamp(),
-        pauseAfterTurn: false
+        turnReadyCount: 0,
+        pauseAfterTurn: false,
+        syncEpoch: nextEpoch,
+        endedAt: serverTimestamp()
       });
     } else {
       transaction.update(sessionRef, {
         status: 'sequencing',
         currentHour: newHour,
-        pauseAfterTurn: false
+        turnReadyCount: 0,
+        pauseAfterTurn: false,
+        syncEpoch: nextEpoch
       });
     }
   });
 }
 
 export async function deleteSession(sessionId: string) {
-  // Delete all players in the session first
   const playersQuery = query(collection(db, 'players'), where('sessionId', '==', sessionId));
   const playersSnapshot = await getDocs(playersQuery);
+  const rosterSnapshot = await getDocs(collection(db, 'sessions', sessionId, 'roster'));
 
-  const batch = writeBatch(db);
-  playersSnapshot.docs.forEach(doc => {
-    batch.delete(doc.ref);
-  });
-  batch.delete(doc(db, 'sessions', sessionId));
-  await batch.commit();
+  const refs: DocumentReference[] = [
+    ...playersSnapshot.docs.map((docSnap) => docSnap.ref),
+    ...rosterSnapshot.docs.map((docSnap) => docSnap.ref),
+    doc(db, 'sessions', sessionId)
+  ];
+
+  await deleteRefsInBatches(refs);
 }
 
 export async function deleteAllInstructorSessions(instructorId: string) {
@@ -370,15 +637,7 @@ export async function deleteAllInstructorSessions(instructorId: string) {
 export function subscribeToSession(sessionId: string, callback: (session: Session | null) => void) {
   return onSnapshot(doc(db, 'sessions', sessionId), (docSnap) => {
     if (docSnap.exists()) {
-      const data = docSnap.data();
-      callback({
-        id: docSnap.id,
-        ...data,
-        createdAt: data.createdAt?.toDate() || new Date(),
-        startedAt: data.startedAt?.toDate(),
-        endedAt: data.endedAt?.toDate(),
-        expiresAt: data.expiresAt?.toDate() || new Date()
-      } as Session);
+      callback(mapSessionFromSnapshot(docSnap.id, docSnap.data()));
     } else {
       callback(null);
     }
@@ -390,56 +649,102 @@ type JoinSessionResult = { player: Player; error?: undefined } | { player: null;
 // Player Functions
 export async function joinSession(sessionCode: string, playerName: string): Promise<JoinSessionResult> {
   const normalizedCode = sessionCode.toUpperCase();
+  const cleanedName = playerName.trim().replace(/\s+/g, ' ');
   const session = (await getSessionByCode(normalizedCode)) || (await getSession(sessionCode));
   if (!session) return { player: null, error: 'SESSION_INVALID' };
 
-  // Check if player already exists in session
-  const existingPlayer = await getPlayerByNameInSession(session.id, playerName);
-  if (existingPlayer) {
-    // Block duplicate joins during setup; allow reconnection once game is underway
-    if (session.status === 'setup') {
-      return { player: null, error: 'NAME_TAKEN' };
+  const result = await runTransaction(db, async (transaction) => {
+    const sessionRef = doc(db, 'sessions', session.id);
+    const sessionSnap = await transaction.get(sessionRef);
+    if (!sessionSnap.exists()) return { kind: 'error' as const, error: 'SESSION_INVALID' as const };
+
+    const sessionData = sessionSnap.data();
+    const sessionStatus = sessionData.status;
+    const expiresAt = sessionData.expiresAt?.toDate?.() ?? new Date(0);
+    if (sessionStatus === 'completed' || new Date() > expiresAt) {
+      return { kind: 'error' as const, error: 'SESSION_INVALID' as const };
     }
-    // Reconnect
-    await updateDoc(doc(db, 'players', existingPlayer.id), {
+
+    const maxPlayers = Number(sessionData.maxPlayers ?? DEFAULT_MAX_PLAYERS);
+    const playerCount = Number(sessionData.playerCount ?? (Array.isArray(sessionData.players) ? sessionData.players.length : 0));
+
+    const rosterRef = doc(db, 'sessions', session.id, 'roster', getRosterLockId(cleanedName));
+    const rosterSnap = await transaction.get(rosterRef);
+
+    if (rosterSnap.exists()) {
+      const existingPlayerId = String(rosterSnap.data().playerId || '');
+      if (existingPlayerId) {
+        const existingPlayerRef = doc(db, 'players', existingPlayerId);
+        const existingPlayerSnap = await transaction.get(existingPlayerRef);
+
+        if (existingPlayerSnap.exists()) {
+          const existingPlayerData = existingPlayerSnap.data();
+          const existingPlayer = mapPlayerFromSnapshot(existingPlayerSnap.id, existingPlayerData);
+
+          if (sessionStatus === 'setup') {
+            return { kind: 'error' as const, error: 'NAME_TAKEN' as const };
+          }
+
+          transaction.update(existingPlayerRef, {
+            isConnected: true,
+            lastSeen: serverTimestamp()
+          });
+
+          return {
+            kind: 'reconnect' as const,
+            player: {
+              ...existingPlayer,
+              isConnected: true,
+              lastSeen: new Date()
+            }
+          };
+        }
+      }
+    }
+
+    if (playerCount >= maxPlayers) {
+      return { kind: 'error' as const, error: 'SESSION_INVALID' as const };
+    }
+
+    const playerId = doc(collection(db, 'players')).id;
+    const player: Player = {
+      id: playerId,
+      name: cleanedName,
+      sessionId: session.id,
+      joinedAt: new Date(),
       isConnected: true,
+      lastSeen: new Date(),
+      gameState: initializePlayerGameState()
+    };
+
+    transaction.set(doc(db, 'players', playerId), {
+      ...player,
+      joinedAt: serverTimestamp(),
       lastSeen: serverTimestamp()
     });
-    return { player: { ...existingPlayer, isConnected: true, lastSeen: new Date() } };
+
+    transaction.set(rosterRef, {
+      playerId,
+      normalizedName: normalizePlayerName(cleanedName),
+      createdAt: serverTimestamp()
+    });
+
+    transaction.update(sessionRef, {
+      playerCount: increment(1),
+      players: arrayUnion(playerId)
+    });
+
+    return { kind: 'new' as const, player };
+  });
+
+  if (result.kind === 'error') {
+    return { player: null, error: result.error };
+  }
+  if (result.kind === 'reconnect') {
+    return { player: result.player };
   }
 
-  // Block new joins only if the session has ended or is expired
-  if (session.status === 'completed' || new Date() > session.expiresAt) return { player: null, error: 'SESSION_INVALID' };
-
-  // Enforce player cap (default 100)
-  const maxPlayers = 100;
-  if (session.players.length >= maxPlayers) return { player: null, error: 'SESSION_INVALID' };
-
-  // Create new player
-  const playerId = doc(collection(db, 'players')).id;
-  const player: Player = {
-    id: playerId,
-    name: playerName,
-    sessionId: session.id,
-    joinedAt: new Date(),
-    isConnected: true,
-    lastSeen: new Date(),
-    gameState: initializePlayerGameState()
-  };
-
-  // Atomic: create player doc and update session's players array in one batch
-  const batch = writeBatch(db);
-  batch.set(doc(db, 'players', playerId), {
-    ...player,
-    joinedAt: serverTimestamp(),
-    lastSeen: serverTimestamp()
-  });
-  batch.update(doc(db, 'sessions', session.id), {
-    players: arrayUnion(playerId)
-  });
-  await batch.commit();
-
-  return { player };
+  return { player: result.player };
 }
 
 export async function getPlayerByNameInSession(sessionId: string, name: string): Promise<Player | null> {
@@ -450,46 +755,24 @@ export async function getPlayerByNameInSession(sessionId: string, name: string):
     limit(1)
   );
   const querySnapshot = await getDocs(q);
-  if (!querySnapshot.empty) {
-    const doc = querySnapshot.docs[0];
-    const data = doc.data();
-    return {
-      id: doc.id,
-      ...data,
-      joinedAt: data.joinedAt?.toDate() || new Date(),
-      lastSeen: data.lastSeen?.toDate() || new Date()
-    } as Player;
-  }
-  return null;
+  if (querySnapshot.empty) return null;
+
+  const docSnap = querySnapshot.docs[0];
+  return mapPlayerFromSnapshot(docSnap.id, docSnap.data());
 }
 
 export async function getPlayer(playerId: string): Promise<Player | null> {
   const docRef = doc(db, 'players', playerId);
   const docSnap = await getDoc(docRef);
-  if (docSnap.exists()) {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      ...data,
-      joinedAt: data.joinedAt?.toDate() || new Date(),
-      lastSeen: data.lastSeen?.toDate() || new Date()
-    } as Player;
-  }
-  return null;
+  if (!docSnap.exists()) return null;
+
+  return mapPlayerFromSnapshot(docSnap.id, docSnap.data());
 }
 
 export async function getSessionPlayers(sessionId: string): Promise<Player[]> {
   const q = query(collection(db, 'players'), where('sessionId', '==', sessionId));
   const querySnapshot = await getDocs(q);
-  return querySnapshot.docs.map(doc => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      ...data,
-      joinedAt: data.joinedAt?.toDate() || new Date(),
-      lastSeen: data.lastSeen?.toDate() || new Date()
-    } as Player;
-  });
+  return querySnapshot.docs.map((docSnap) => mapPlayerFromSnapshot(docSnap.id, docSnap.data()));
 }
 
 export async function updatePlayerGameState(playerId: string, gameState: PlayerGameState) {
@@ -528,30 +811,56 @@ export async function nudgePlayer(playerId: string) {
 }
 
 export async function kickPlayer(playerId: string) {
-  const player = await getPlayer(playerId);
-  if (player) {
-    // Remove from session's player list
-    const session = await getSession(player.sessionId);
-    if (session) {
-      await updateDoc(doc(db, 'sessions', session.id), {
-        players: session.players.filter(id => id !== playerId)
-      });
+  await runTransaction(db, async (transaction) => {
+    const playerRef = doc(db, 'players', playerId);
+    const playerSnap = await transaction.get(playerRef);
+    if (!playerSnap.exists()) return;
+
+    const playerData = playerSnap.data();
+    const player = mapPlayerFromSnapshot(playerSnap.id, playerData);
+    const sessionRef = doc(db, 'sessions', player.sessionId);
+    const sessionSnap = await transaction.get(sessionRef);
+
+    transaction.delete(playerRef);
+    transaction.delete(doc(db, 'sessions', player.sessionId, 'roster', getRosterLockId(player.name)));
+
+    if (!sessionSnap.exists()) return;
+
+    const sessionData = sessionSnap.data();
+    const currentPlayerCount = Number(sessionData.playerCount ?? (Array.isArray(sessionData.players) ? sessionData.players.length : 0));
+    const nextPlayerCount = Math.max(0, currentPlayerCount - 1);
+
+    let staffingReadyCount = Math.min(Number(sessionData.staffingReadyCount ?? 0), nextPlayerCount);
+    let turnReadyCount = Math.min(Number(sessionData.turnReadyCount ?? 0), nextPlayerCount);
+
+    const sessionEpoch = Number(sessionData.syncEpoch ?? 0);
+    const playerLastReadyEpoch = Number(player.gameState.lastReadyEpoch ?? -1);
+    const playerCountsForStaffing = player.gameState.staffingComplete;
+    const playerCountsForTurn = player.gameState.hourComplete &&
+      Number(player.gameState.lastCompletedHour ?? 0) >= Number(sessionData.currentHour ?? 0);
+
+    if (playerLastReadyEpoch === sessionEpoch) {
+      if (sessionData.status === 'staffing' && playerCountsForStaffing) {
+        staffingReadyCount = Math.max(0, staffingReadyCount - 1);
+      }
+      if (sessionData.status === 'sequencing' && playerCountsForTurn) {
+        turnReadyCount = Math.max(0, turnReadyCount - 1);
+      }
     }
-    // Delete player document
-    await deleteDoc(doc(db, 'players', playerId));
-  }
+
+    transaction.update(sessionRef, {
+      playerCount: nextPlayerCount,
+      players: (Array.isArray(sessionData.players) ? sessionData.players : []).filter((id: string) => id !== playerId),
+      staffingReadyCount,
+      turnReadyCount
+    });
+  });
 }
 
 export function subscribeToPlayer(playerId: string, callback: (player: Player | null) => void) {
   return onSnapshot(doc(db, 'players', playerId), (docSnap) => {
     if (docSnap.exists()) {
-      const data = docSnap.data();
-      callback({
-        id: docSnap.id,
-        ...data,
-        joinedAt: data.joinedAt?.toDate() || new Date(),
-        lastSeen: data.lastSeen?.toDate() || new Date()
-      } as Player);
+      callback(mapPlayerFromSnapshot(docSnap.id, docSnap.data()));
     } else {
       callback(null);
     }
@@ -563,15 +872,7 @@ export function subscribeToSessionPlayers(sessionId: string, callback: (players:
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   const unsubscribe = onSnapshot(q, (querySnapshot) => {
-    const players = querySnapshot.docs.map(doc => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        ...data,
-        joinedAt: data.joinedAt?.toDate() || new Date(),
-        lastSeen: data.lastSeen?.toDate() || new Date()
-      } as Player;
-    });
+    const players = querySnapshot.docs.map((docSnap) => mapPlayerFromSnapshot(docSnap.id, docSnap.data()));
 
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => callback(players), 300);
@@ -619,3 +920,4 @@ export async function createAdminInstructor(
     ...instructor
   };
 }
+

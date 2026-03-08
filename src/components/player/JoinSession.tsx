@@ -104,8 +104,10 @@ export function JoinSession() {
         </form>
 
         <div className="instructor-link">
-          <span>Are you an instructor?</span>
-          <a href="/instructor/login">Log in here</a>
+          <span>Instructor access:</span>
+          <a href="/instructor/login">Log in</a>
+          <span className="instructor-link-separator">|</span>
+          <a href="/instructor/login?mode=register">Request an account</a>
         </div>
       </motion.div>
     </div>

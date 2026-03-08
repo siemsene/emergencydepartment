@@ -10,6 +10,7 @@ setGlobalOptions({maxInstances: 10});
 admin.initializeApp();
 
 const PLAYER_DELETE_BATCH_SIZE = 400;
+const ROSTER_DELETE_BATCH_SIZE = 400;
 
 // Secrets
 const smtp2goApiKey = defineSecret("SMTP2GO_API_KEY");
@@ -67,6 +68,44 @@ async function deleteSessionPlayers(
   return deletedCount;
 }
 
+/**
+ * Deletes all roster lock docs linked to the provided session.
+ * @param {admin.firestore.Firestore} db Firestore instance.
+ * @param {string} sessionId Session ID to clean up.
+ * @return {Promise<number>} Number of deleted roster docs.
+ */
+async function deleteSessionRosterEntries(
+  db: admin.firestore.Firestore,
+  sessionId: string
+): Promise<number> {
+  let deletedCount = 0;
+  let hasMoreRoster = true;
+
+  while (hasMoreRoster) {
+    const rosterSnapshot = await db
+      .collection("sessions")
+      .doc(sessionId)
+      .collection("roster")
+      .limit(ROSTER_DELETE_BATCH_SIZE)
+      .get();
+
+    if (rosterSnapshot.empty) {
+      hasMoreRoster = false;
+      continue;
+    }
+
+    const batch = db.batch();
+    rosterSnapshot.docs.forEach((rosterDoc) => {
+      batch.delete(rosterDoc.ref);
+    });
+
+    await batch.commit();
+    deletedCount += rosterSnapshot.size;
+  }
+
+  return deletedCount;
+}
+
 export const cleanupExpiredSessions = onSchedule("every 24 hours", async () => {
   const db = admin.firestore();
   const cutoff = admin.firestore.Timestamp.fromDate(new Date());
@@ -83,10 +122,12 @@ export const cleanupExpiredSessions = onSchedule("every 24 hours", async () => {
 
   let sessionsDeleted = 0;
   let playersDeleted = 0;
+  let rosterLocksDeleted = 0;
 
   for (const sessionDoc of expiredSessionsSnapshot.docs) {
     const sessionId = sessionDoc.id;
     playersDeleted += await deleteSessionPlayers(db, sessionId);
+    rosterLocksDeleted += await deleteSessionRosterEntries(db, sessionId);
     await sessionDoc.ref.delete();
     sessionsDeleted += 1;
   }
@@ -94,6 +135,7 @@ export const cleanupExpiredSessions = onSchedule("every 24 hours", async () => {
   logger.info("Expired session cleanup complete.", {
     sessionsDeleted,
     playersDeleted,
+    rosterLocksDeleted,
     retentionDays: 30,
   });
 });
@@ -130,6 +172,32 @@ export const sendEmail = onCall(
     const apiKey = smtp2goApiKey.value();
     const adminAddr = adminEmail.value();
     const fromAddr = fromEmail.value() || "noreply@emergencygame.com";
+
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "Authentication required");
+    }
+
+    const callerEmail = request.auth.token.email || "";
+    const adminOnlyActions: EmailAction[] = [
+      "notifyInstructorApproved",
+      "notifyInstructorRejected",
+      "sendPasswordResetEmail",
+    ];
+    if (adminOnlyActions.includes(data.action)) {
+      if (!adminAddr) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Admin email secret not configured"
+        );
+      }
+      if (callerEmail !== adminAddr) {
+        throw new HttpsError(
+          "permission-denied",
+          "Only admin can perform this action"
+        );
+      }
+    }
+
 
     if (!apiKey) {
       logger.warn("SMTP2GO API key not configured. Email not sent.");

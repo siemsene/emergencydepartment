@@ -4,8 +4,6 @@ import {
   ComposedChart, Scatter, Line, BarChart, Bar, Legend,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
 import { Session, PlayerResult, Player } from '../../types';
 import { getSession, getSessionPlayers } from '../../services/firebaseService';
 import {
@@ -182,7 +180,11 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
     setIsExportingExcel(true);
 
     try {
-      const ExcelJS = await import('exceljs');
+      const [ExcelJS, html2canvasLib] = await Promise.all([
+        import('exceljs'),
+        import('html2canvas')
+      ]);
+      const html2canvas = html2canvasLib.default;
       const workbook = new ExcelJS.Workbook();
       const currency = session.parameters.currencySymbol || '$';
 
@@ -514,6 +516,11 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
     await new Promise(r => setTimeout(r, 500));
 
     try {
+      const [{ jsPDF }, html2canvasLib] = await Promise.all([
+        import('jspdf'),
+        import('html2canvas')
+      ]);
+      const html2canvas = html2canvasLib.default;
       const pdf = new jsPDF('p', 'mm', 'a4');
       const pageW = 210;
       const pageH = 297;
@@ -956,3 +963,4 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
     </div>
   );
 }
+

@@ -22,11 +22,15 @@ service cloud.firestore {
       // Only authenticated instructors can write to sessions
       allow create: if isSignedIn();
       allow update: if isSignedIn() || (
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players'])
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'playerCount', 'staffingReadyCount', 'turnReadyCount', 'syncEpoch', 'currentHour', 'status', 'pauseAfterTurn', 'endedAt'])
       );
       allow delete: if isSignedIn();
     }
 
+    match /sessions/{sessionId}/roster/{lockId} {
+      // Lightweight roster locks for join deduplication
+      allow read, write: if true;
+    }
     match /players/{playerId} {
       // Anyone can read players
       allow read: if true;
@@ -42,3 +46,5 @@ service cloud.firestore {
     }
   }
 }
+
+

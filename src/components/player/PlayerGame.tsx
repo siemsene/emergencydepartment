@@ -1,13 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useGame } from '../../contexts/GameContext';
 import { GameBoard } from '../game/GameBoard';
-import { GameResults } from '../analytics/GameResults';
-import { getSession, getPlayer, subscribeToSession, subscribeToPlayer, updatePlayerConnection } from '../../services/firebaseService';
-// Note: subscribeToPlayer is used here ONLY for kick detection.
-// Player game state updates are handled by GameContext to avoid race conditions.
+import { getSession, getPlayer, updatePlayerConnection } from '../../services/firebaseService';
 import './PlayerGame.css';
+
+const GameResults = lazy(() =>
+  import('../analytics/GameResults').then((module) => ({ default: module.GameResults }))
+);
 
 export function PlayerGame() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -74,37 +75,15 @@ export function PlayerGame() {
     };
   }, [sessionId, navigate, setSession, setPlayer]);
 
-  // Subscribe to session updates
+  // GameContext is the source of truth for live player/session snapshots.
+  // If the player doc disappears (e.g. kicked), GameContext sets player to null.
   useEffect(() => {
-    if (!sessionId) return;
-
-    const unsubscribe = subscribeToSession(sessionId, (updatedSession) => {
-      if (updatedSession) {
-        setSession(updatedSession);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [sessionId, setSession]);
-
-  // Note: Player updates are handled by GameContext's subscription.
-  // We only need to handle the "player was kicked" case here by checking
-  // if the player document was deleted.
-  useEffect(() => {
-    if (!player?.id) return;
-
-    const unsubscribe = subscribeToPlayer(player.id, (updatedPlayer) => {
-      if (!updatedPlayer) {
-        // Player was kicked (document deleted)
-        localStorage.removeItem('playerId');
-        navigate('/');
-      }
-      // Don't call setPlayer here - GameContext handles player updates
-      // with proper guards to prevent race conditions
-    });
-
-    return () => unsubscribe();
-  }, [player?.id, navigate]);
+    if (isLoading || error) return;
+    if (!player) {
+      localStorage.removeItem('playerId');
+      navigate('/');
+    }
+  }, [isLoading, error, player, navigate]);
 
   if (isLoading) {
     return (
@@ -168,7 +147,11 @@ export function PlayerGame() {
 
   // Show results if game is completed
   if (session.status === 'completed') {
-    return <GameResults sessionId={session.id} playerId={player.id} />;
+    return (
+      <Suspense fallback={<div className="player-game-loading">Loading results...</div>}>
+        <GameResults sessionId={session.id} playerId={player.id} />
+      </Suspense>
+    );
   }
 
   // Show game board

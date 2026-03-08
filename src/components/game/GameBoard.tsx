@@ -2,14 +2,12 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGame } from '../../contexts/GameContext';
 import { RoomCard, EmptyRoomSlot, RoomInventoryCard } from './RoomCard';
-import { PatientChip } from './PatientChip';
 import { WaitingQueue } from './WaitingQueue';
 import { TurnSummary } from './TurnSummary';
 import { Button } from '../shared/Button';
 import { Modal } from '../shared/Modal';
-import { Room, RoomType, PatientType, Player } from '../../types';
-import { subscribeToSessionPlayers } from '../../services/firebaseService';
-import { HOURS_OF_DAY, PATIENT_ROOM_OPTIONS, DEFAULT_PARAMETERS } from '../../data/gameConstants';
+import { Room, RoomType, PatientType } from '../../types';
+import { HOURS_OF_DAY, DEFAULT_PARAMETERS } from '../../data/gameConstants';
 import { formatCurrency, canTreatInRoom, getTreatmentTime } from '../../utils/gameUtils';
 import { AnimatedCurrency } from '../shared/AnimatedCurrency';
 import { RevealEvent } from './TurnSummary';
@@ -44,7 +42,6 @@ export function GameBoard() {
   const [phaseBanner, setPhaseBanner] = useState('');
   const [displayedRevenue, setDisplayedRevenue] = useState(0);
   const [displayedCost, setDisplayedCost] = useState(0);
-  const [playersReady, setPlayersReady] = useState<{ ready: number; total: number } | null>(null);
 
   // Refs for cleanup and stable function references
   const rollAnimationRef = useRef<NodeJS.Timeout | null>(null);
@@ -67,28 +64,6 @@ export function GameBoard() {
     };
   }, []);
 
-  // Track player readiness in sync multi-player games
-  useEffect(() => {
-    if (!session?.id || session.asyncMode) return;
-    if (session.status !== 'sequencing' && session.status !== 'staffing') return;
-
-    const unsubscribe = subscribeToSessionPlayers(session.id, (allPlayers: Player[]) => {
-      if (allPlayers.length <= 1) {
-        setPlayersReady(null);
-        return;
-      }
-      const readyCount = allPlayers.filter(p => {
-        if (session.status === 'staffing') {
-          return p.gameState.staffingComplete;
-        }
-        return p.gameState.currentPhase === 'waiting' && p.gameState.hourComplete;
-      }).length;
-      setPlayersReady({ ready: readyCount, total: allPlayers.length });
-    });
-
-    return () => unsubscribe();
-  }, [session?.id, session?.asyncMode, session?.status, session?.currentHour]);
-
   const isAsyncMode = !!session?.asyncMode;
   // In async mode, show staffing UI based on player's own staffingComplete flag
   const isStaffingPhase = isAsyncMode
@@ -100,6 +75,14 @@ export function GameBoard() {
   // In async mode, use the player's own hour
   const currentHour = isAsyncMode ? (gameState?.currentHour || 0) : (session?.currentHour || 0);
   const params = session?.parameters || DEFAULT_PARAMETERS;
+
+  const playersReady = !session || session.asyncMode
+    ? null
+    : session.status === 'staffing'
+      ? { ready: Math.min(session.staffingReadyCount ?? 0, session.playerCount ?? 0), total: session.playerCount ?? 0 }
+      : session.status === 'sequencing'
+        ? { ready: Math.min(session.turnReadyCount ?? 0, session.playerCount ?? 0), total: session.playerCount ?? 0 }
+        : null;
 
   // Clear animation timers when session phase changes (e.g., session ends)
   useEffect(() => {
@@ -468,44 +451,6 @@ export function GameBoard() {
     setIsSummaryComplete(true);
   }, []);
 
-  // If there are no risk events or completed patients, auto-complete the summary
-  // after the arrivals reveal duration so the turn doesn't get stuck in review.
-  useEffect(() => {
-    if (!gameState) return;
-    if (gameState.currentPhase !== 'review') return;
-    if (isSummaryComplete) return;
-
-    const riskCount = gameState.turnEvents?.riskEvents?.length ?? 0;
-    const completedCount = gameState.turnEvents?.completed?.length ?? 0;
-    if (riskCount > 0 || completedCount > 0) return;
-
-    const arrived = gameState.turnEvents?.arrived;
-    const turnedAway = gameState.turnEvents?.turnedAway;
-    const arrivalCount =
-      (arrived?.A ?? 0) + (arrived?.B ?? 0) + (arrived?.C ?? 0) +
-      (turnedAway?.A ?? 0) + (turnedAway?.B ?? 0) + (turnedAway?.C ?? 0);
-
-    // Arrivals reveal at 100ms each, then a 500ms pause before results.
-    const delay = arrivalCount * 100 + 600;
-    const timer = setTimeout(() => {
-      setIsSummaryComplete(true);
-    }, delay);
-
-    return () => clearTimeout(timer);
-  }, [gameState?.currentPhase, gameState?.turnEvents, isSummaryComplete]);
-
-  // Failsafe: if review hangs for any reason, allow finishing after a short delay.
-  useEffect(() => {
-    if (!gameState) return;
-    if (gameState.currentPhase !== 'review') return;
-    if (isSummaryComplete) return;
-
-    const timer = setTimeout(() => {
-      setIsSummaryComplete(true);
-    }, 5000);
-
-    return () => clearTimeout(timer);
-  }, [gameState?.currentPhase, gameState?.lastArrivalsHour, isSummaryComplete]);
 
   const profit = displayedRevenue - displayedCost;
 
@@ -572,7 +517,7 @@ export function GameBoard() {
             <span className="stat-label">Profit</span>
             <AnimatedCurrency value={profit} currencySymbol={currencySymbol} className="stat-value" />
           </div>
-          {playersReady && (
+          {playersReady && playersReady.total > 1 && (
             <div className={`header-stat players-ready${playersReady.ready === playersReady.total - 1 && gameState.currentPhase !== 'waiting' ? ' last-player' : ''}`}>
               <span className="stat-label">Ready</span>
               <span className="stat-value">{playersReady.ready}/{playersReady.total}</span>
@@ -817,3 +762,7 @@ export function GameBoard() {
     </div>
   );
 }
+
+
+
+
