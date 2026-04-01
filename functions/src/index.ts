@@ -227,8 +227,11 @@ export const sendEmail = onCall(
       to = adminAddr;
       subject = "New Instructor Registration - Emergency! Game";
       html = `
-          <h2>New Instructor Registration</h2>
-          <p>A new instructor has registered and is awaiting approval:</p>
+          <h2>New Instructor Registration - Emergency! Game</h2>
+          <p>A new instructor has registered for the
+          <strong>Emergency! Game</strong>
+          (Emergency Department simulation)
+          and is awaiting approval:</p>
           <ul>
             <li><strong>Name:</strong> ${safeName}</li>
             <li><strong>Email:</strong> ${safeEmail}</li>
