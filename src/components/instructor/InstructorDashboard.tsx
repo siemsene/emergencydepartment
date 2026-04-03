@@ -104,18 +104,17 @@ export function InstructorDashboard() {
   };
 
   const getStatusBadge = (status: Session['status']) => {
-    const statusConfig = {
-      setup: { label: 'Setup', color: '#64748b' },
-      staffing: { label: 'Staffing', color: '#f59e0b' },
-      sequencing: { label: 'In Progress', color: '#22c55e' },
-      paused: { label: 'Paused', color: '#f97316' },
-      completed: { label: 'Completed', color: '#3b82f6' }
+    const statusLabels: Record<Session['status'], string> = {
+      setup: 'Setup',
+      staffing: 'Staffing',
+      sequencing: 'In Progress',
+      paused: 'Paused',
+      completed: 'Completed'
     };
 
-    const config = statusConfig[status];
     return (
-      <span className="status-badge" style={{ backgroundColor: config.color }}>
-        {config.label}
+      <span className={`status-badge ${status}`}>
+        {statusLabels[status]}
       </span>
     );
   };

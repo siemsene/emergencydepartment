@@ -106,39 +106,49 @@ async function deleteSessionRosterEntries(
   return deletedCount;
 }
 
-export const cleanupExpiredSessions = onSchedule("every 24 hours", async () => {
-  const db = admin.firestore();
-  const cutoff = admin.firestore.Timestamp.fromDate(new Date());
+export const cleanupExpiredSessions = onSchedule(
+  "every 168 hours",
+  async () => {
+    const db = admin.firestore();
+    const cutoff = admin.firestore.Timestamp.fromDate(
+      new Date()
+    );
 
-  const expiredSessionsSnapshot = await db
-    .collection("sessions")
-    .where("expiresAt", "<=", cutoff)
-    .get();
+    const expiredSessionsSnapshot = await db
+      .collection("sessions")
+      .where("expiresAt", "<=", cutoff)
+      .get();
 
-  if (expiredSessionsSnapshot.empty) {
-    logger.info("No expired sessions found for cleanup.");
-    return;
+    if (expiredSessionsSnapshot.empty) {
+      logger.info(
+        "No expired sessions found for cleanup."
+      );
+      return;
+    }
+
+    let sessionsDeleted = 0;
+    let playersDeleted = 0;
+    let rosterLocksDeleted = 0;
+
+    for (const sessionDoc of expiredSessionsSnapshot.docs) {
+      const sessionId = sessionDoc.id;
+      playersDeleted += await deleteSessionPlayers(
+        db, sessionId
+      );
+      rosterLocksDeleted +=
+        await deleteSessionRosterEntries(db, sessionId);
+      await sessionDoc.ref.delete();
+      sessionsDeleted += 1;
+    }
+
+    logger.info("Expired session cleanup complete.", {
+      sessionsDeleted,
+      playersDeleted,
+      rosterLocksDeleted,
+      retentionDays: 30,
+    });
   }
-
-  let sessionsDeleted = 0;
-  let playersDeleted = 0;
-  let rosterLocksDeleted = 0;
-
-  for (const sessionDoc of expiredSessionsSnapshot.docs) {
-    const sessionId = sessionDoc.id;
-    playersDeleted += await deleteSessionPlayers(db, sessionId);
-    rosterLocksDeleted += await deleteSessionRosterEntries(db, sessionId);
-    await sessionDoc.ref.delete();
-    sessionsDeleted += 1;
-  }
-
-  logger.info("Expired session cleanup complete.", {
-    sessionsDeleted,
-    playersDeleted,
-    rosterLocksDeleted,
-    retentionDays: 30,
-  });
-});
+);
 
 // ---- Email Cloud Function ----
 

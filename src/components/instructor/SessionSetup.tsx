@@ -431,8 +431,9 @@ export function SessionSetup() {
                     <div className="weights-grid">
                       {parameters.hourlyWeights[type as keyof typeof parameters.hourlyWeights].map((weight: number, i: number) => (
                         <div key={i} className="weight-input">
-                          <label>{HOURS_OF_DAY[i]}</label>
+                          <label htmlFor={`weight-${type}-${i}`}>{HOURS_OF_DAY[i]}</label>
                           <input
+                            id={`weight-${type}-${i}`}
                             type="number"
                             step="0.001"
                             value={weight}

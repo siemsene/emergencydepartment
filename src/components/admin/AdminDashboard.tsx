@@ -19,7 +19,7 @@ export function AdminDashboard() {
   const { user, isAdmin, logout } = useAuth();
 
   const [instructors, setInstructors] = useState<Instructor[]>([]);
-  const [instructorStats, setInstructorStats] = useState<Map<string, number>>(new Map());
+  const [instructorStats, setInstructorStats] = useState<Map<string, { totalStudents: number; completedPlayers: number }>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
   const [actionInstructorId, setActionInstructorId] = useState<string | null>(null);
   const [actionType, setActionType] = useState<'approve' | 'remove' | null>(null);
@@ -50,7 +50,10 @@ export function AdminDashboard() {
       approvedInstructors.map(async (instructor) => {
         const sessions = await getInstructorSessions(instructor.id);
         const totalStudents = sessions.reduce((sum, s) => sum + s.players.length, 0);
-        return [instructor.id, totalStudents] as [string, number];
+        const completedPlayers = sessions
+          .filter(s => s.status === 'completed')
+          .reduce((sum, s) => sum + s.players.length, 0);
+        return [instructor.id, { totalStudents, completedPlayers }] as [string, { totalStudents: number; completedPlayers: number }];
       })
     );
     setInstructorStats(new Map(entries));
@@ -195,6 +198,7 @@ export function AdminDashboard() {
                 <span>Organization</span>
                 <span>Sessions</span>
                 <span>Total Students</span>
+                <span>Completed</span>
                 <span>Last Active</span>
                 <span>Actions</span>
               </div>
@@ -211,7 +215,8 @@ export function AdminDashboard() {
                     <span className="email">{instructor.email}</span>
                     <span>{instructor.organization || '-'}</span>
                     <span>{instructor.sessionsCreated}</span>
-                    <span>{instructorStats.get(instructor.id) ?? '—'}</span>
+                    <span>{instructorStats.get(instructor.id)?.totalStudents ?? '—'}</span>
+                    <span>{instructorStats.get(instructor.id)?.completedPlayers ?? '—'}</span>
                     <span>
                       {instructor.lastActive
                         ? instructor.lastActive.toLocaleDateString()

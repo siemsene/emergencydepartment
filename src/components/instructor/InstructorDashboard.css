@@ -132,6 +132,26 @@
   font-weight: 600;
 }
 
+.status-badge.setup {
+  background-color: #64748b;
+}
+
+.status-badge.staffing {
+  background-color: #f59e0b;
+}
+
+.status-badge.sequencing {
+  background-color: #22c55e;
+}
+
+.status-badge.paused {
+  background-color: #f97316;
+}
+
+.status-badge.completed {
+  background-color: #3b82f6;
+}
+
 .session-card-status {
   display: flex;
   align-items: center;
