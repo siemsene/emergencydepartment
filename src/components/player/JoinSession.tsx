@@ -109,6 +109,10 @@ export function JoinSession() {
           <span className="instructor-link-separator">|</span>
           <a href="/instructor/login?mode=register">Request an account</a>
         </div>
+
+        <div className="instructor-link">
+          <a href="https://craigfroehle.github.io/docs/student.html" target="_blank" rel="noopener noreferrer">Player Guidebook</a>
+        </div>
       </motion.div>
     </div>
   );

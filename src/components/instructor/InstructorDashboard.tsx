@@ -146,6 +146,8 @@ export function InstructorDashboard() {
         </div>
         <div className="header-right">
           <span className="user-name">Welcome, {instructor.name}</span>
+          <a href="https://craigfroehle.github.io/docs/moddocs.html" target="_blank" rel="noopener noreferrer" className="guidebook-link">Instructor Guidebook</a>
+          <a href="https://craigfroehle.github.io/docs/student.html" target="_blank" rel="noopener noreferrer" className="guidebook-link">Player Guidebook</a>
           {isAdmin && (
             <Button variant="secondary" size="small" onClick={() => navigate('/admin')}>
               Admin Panel

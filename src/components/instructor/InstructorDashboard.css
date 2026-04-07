@@ -40,6 +40,17 @@
   font-size: 0.875rem;
 }
 
+.guidebook-link {
+  color: #93c5fd;
+  font-size: 0.875rem;
+  text-decoration: none;
+}
+
+.guidebook-link:hover {
+  color: #bfdbfe;
+  text-decoration: underline;
+}
+
 .dashboard-main {
   max-width: 1200px;
   margin: 0 auto;
