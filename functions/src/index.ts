@@ -179,15 +179,15 @@ export const sendEmail = onCall(
       throw new HttpsError("invalid-argument", "Missing action field");
     }
 
-    const apiKey = smtp2goApiKey.value();
-    const adminAddr = adminEmail.value();
-    const fromAddr = fromEmail.value() || "noreply@emergencygame.com";
+    const apiKey = smtp2goApiKey.value().trim();
+    const adminAddr = adminEmail.value().trim().toLowerCase();
+    const fromAddr = fromEmail.value().trim() || "noreply@emergencygame.com";
 
     if (!request.auth) {
       throw new HttpsError("unauthenticated", "Authentication required");
     }
 
-    const callerEmail = request.auth.token.email || "";
+    const callerEmail = (request.auth.token.email || "").toLowerCase();
     const adminOnlyActions: EmailAction[] = [
       "notifyInstructorApproved",
       "notifyInstructorRejected",
@@ -201,6 +201,11 @@ export const sendEmail = onCall(
         );
       }
       if (callerEmail !== adminAddr) {
+        logger.warn("Admin check failed", {
+          callerEmail,
+          adminAddr,
+          action: data.action,
+        });
         throw new HttpsError(
           "permission-denied",
           "Only admin can perform this action"
