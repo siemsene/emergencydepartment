@@ -10,41 +10,332 @@ service cloud.firestore {
       return isSignedIn() && request.auth.token.email == "siemsene@gmail.com";
     }
 
+    function instructorExists(userId) {
+      return exists(/databases/$(database)/documents/instructors/$(userId));
+    }
+
+    function instructorDoc(userId) {
+      return get(/databases/$(database)/documents/instructors/$(userId));
+    }
+
+    function isApprovedInstructor(userId) {
+      return isSignedIn() &&
+        request.auth.uid == userId &&
+        instructorExists(userId) &&
+        instructorDoc(userId).data.approved == true &&
+        instructorDoc(userId).data.role == "instructor";
+    }
+
+    function sessionExists(sessionId) {
+      return exists(/databases/$(database)/documents/sessions/$(sessionId));
+    }
+
+    function sessionDoc(sessionId) {
+      return get(/databases/$(database)/documents/sessions/$(sessionId));
+    }
+
+    function sessionIsJoinable(sessionId) {
+      return sessionExists(sessionId) &&
+        sessionDoc(sessionId).data.status != "completed" &&
+        sessionDoc(sessionId).data.expiresAt > request.time;
+    }
+
+    function canManageSessionForInstructor(instructorId) {
+      return isAdmin() ||
+        (isApprovedInstructor(request.auth.uid) && request.auth.uid == instructorId);
+    }
+
+    function canManageSession(sessionId) {
+      return sessionExists(sessionId) &&
+        canManageSessionForInstructor(sessionDoc(sessionId).data.instructorId);
+    }
+
+    function canManagePlayer(playerSessionId) {
+      return isAdmin() ||
+        (sessionExists(playerSessionId) &&
+          isApprovedInstructor(request.auth.uid) &&
+          sessionDoc(playerSessionId).data.instructorId == request.auth.uid);
+    }
+
+    function validApprovalStatus(status) {
+      return status == "pending" || status == "approved" || status == "rejected";
+    }
+
+    function validInstructorCreate(userId) {
+      return isSignedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.keys().hasAll([
+          "email", "name", "role", "approved", "approvalStatus",
+          "sessionsCreated", "createdAt"
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          "email", "name", "role", "approved", "approvalStatus",
+          "organization", "sessionsCreated", "createdAt", "approvedAt"
+        ]) &&
+        request.resource.data.role == "instructor" &&
+        request.resource.data.email == request.auth.token.email &&
+        request.resource.data.sessionsCreated == 0 &&
+        request.resource.data.createdAt == request.time &&
+        validApprovalStatus(request.resource.data.approvalStatus) &&
+        (
+          (
+            !isAdmin() &&
+            request.resource.data.approved == false &&
+            request.resource.data.approvalStatus == "pending" &&
+            !request.resource.data.keys().hasAny(["approvedAt"])
+          ) ||
+          (
+            isAdmin() &&
+            request.resource.data.approved == true &&
+            request.resource.data.approvalStatus == "approved" &&
+            request.resource.data.approvedAt == request.time
+          )
+        );
+    }
+
+    function validOwnInstructorUpdate(userId) {
+      return isSignedIn() &&
+        request.auth.uid == userId &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "lastActive", "sessionsCreated"
+        ]) &&
+        (
+          request.resource.data.sessionsCreated == resource.data.sessionsCreated ||
+          request.resource.data.sessionsCreated == resource.data.sessionsCreated + 1
+        ) &&
+        (
+          !request.resource.data.keys().hasAny(["lastActive"]) ||
+          request.resource.data.lastActive == request.time
+        );
+    }
+
+    function validSessionCreate() {
+      return request.resource.data.keys().hasAll([
+        "id", "code", "instructorId", "name", "createdAt", "expiresAt",
+        "status", "currentHour", "parameters", "arrivals", "players",
+        "maxPlayers", "playerCount", "staffingReadyCount",
+        "turnReadyCount", "syncEpoch", "usePregenerated", "asyncMode"
+      ]) &&
+        request.resource.data.keys().hasOnly([
+          "id", "code", "instructorId", "name", "createdAt", "expiresAt",
+          "status", "currentHour", "parameters", "arrivals", "players",
+          "maxPlayers", "playerCount", "staffingReadyCount",
+          "turnReadyCount", "syncEpoch", "usePregenerated", "asyncMode",
+          "startedAt", "endedAt", "pauseAfterTurn"
+        ]) &&
+        request.resource.data.id is string &&
+        request.resource.data.code is string &&
+        request.resource.data.code.size() == 6 &&
+        request.resource.data.instructorId == request.auth.uid &&
+        request.resource.data.createdAt == request.time &&
+        request.resource.data.status == "setup" &&
+        request.resource.data.currentHour == 0 &&
+        request.resource.data.players.size() == 0 &&
+        request.resource.data.playerCount == 0 &&
+        request.resource.data.staffingReadyCount == 0 &&
+        request.resource.data.turnReadyCount == 0 &&
+        request.resource.data.syncEpoch == 0 &&
+        request.resource.data.maxPlayers > 0 &&
+        request.resource.data.maxPlayers <= 150 &&
+        request.resource.data.arrivals.size() == 0 &&
+        request.resource.data.usePregenerated == false &&
+        request.resource.data.asyncMode == false;
+    }
+
+    function validPublicJoinSessionUpdate(sessionId) {
+      return !isSignedIn() &&
+        sessionIsJoinable(sessionId) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "players", "playerCount"
+        ]) &&
+        request.resource.data.playerCount == resource.data.playerCount + 1 &&
+        request.resource.data.playerCount <= resource.data.maxPlayers &&
+        request.resource.data.players.size() == resource.data.players.size() + 1 &&
+        request.resource.data.players.size() <= resource.data.maxPlayers;
+    }
+
+    function validPublicStaffingReadyIncrement() {
+      return !isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "staffingReadyCount"
+        ]) &&
+        resource.data.status == "staffing" &&
+        request.resource.data.staffingReadyCount == resource.data.staffingReadyCount + 1 &&
+        request.resource.data.staffingReadyCount <= resource.data.playerCount;
+    }
+
+    function validPublicStaffingAdvance() {
+      return !isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "staffingReadyCount", "turnReadyCount", "status", "currentHour", "syncEpoch"
+        ]) &&
+        resource.data.status == "staffing" &&
+        request.resource.data.status == "sequencing" &&
+        request.resource.data.currentHour == 1 &&
+        request.resource.data.syncEpoch == resource.data.syncEpoch + 1 &&
+        request.resource.data.turnReadyCount == 0 &&
+        request.resource.data.staffingReadyCount == resource.data.playerCount;
+    }
+
+    function validPublicTurnReadyIncrement() {
+      return !isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "turnReadyCount"
+        ]) &&
+        resource.data.status == "sequencing" &&
+        request.resource.data.turnReadyCount == resource.data.turnReadyCount + 1 &&
+        request.resource.data.turnReadyCount <= resource.data.playerCount;
+    }
+
+    function validPublicTurnAdvance() {
+      return !isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "turnReadyCount", "currentHour", "syncEpoch"
+        ]) &&
+        resource.data.status == "sequencing" &&
+        resource.data.currentHour < 24 &&
+        request.resource.data.currentHour == resource.data.currentHour + 1 &&
+        request.resource.data.turnReadyCount == 0 &&
+        request.resource.data.syncEpoch == resource.data.syncEpoch + 1;
+    }
+
+    function validPublicTurnPause() {
+      return !isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "turnReadyCount", "status", "pauseAfterTurn", "syncEpoch"
+        ]) &&
+        resource.data.status == "sequencing" &&
+        resource.data.pauseAfterTurn == true &&
+        request.resource.data.status == "paused" &&
+        request.resource.data.pauseAfterTurn == false &&
+        request.resource.data.turnReadyCount == 0 &&
+        request.resource.data.syncEpoch == resource.data.syncEpoch + 1;
+    }
+
+    function validPublicTurnComplete() {
+      return !isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          "turnReadyCount", "status", "currentHour", "syncEpoch", "endedAt"
+        ]) &&
+        resource.data.status == "sequencing" &&
+        resource.data.currentHour == 24 &&
+        request.resource.data.status == "completed" &&
+        request.resource.data.currentHour == 24 &&
+        request.resource.data.turnReadyCount == 0 &&
+        request.resource.data.syncEpoch == resource.data.syncEpoch + 1 &&
+        request.resource.data.endedAt == request.time;
+    }
+
+    function validPlayerCreate(playerId) {
+      return request.resource.data.keys().hasAll([
+          "id", "name", "sessionId", "joinedAt", "isConnected", "lastSeen", "gameState"
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          "id", "name", "sessionId", "joinedAt", "isConnected", "lastSeen", "gameState"
+        ]) &&
+        request.resource.data.id == playerId &&
+        request.resource.data.name is string &&
+        request.resource.data.name.size() > 0 &&
+        request.resource.data.name.size() <= 80 &&
+        request.resource.data.sessionId is string &&
+        sessionIsJoinable(request.resource.data.sessionId) &&
+        sessionDoc(request.resource.data.sessionId).data.playerCount <
+          sessionDoc(request.resource.data.sessionId).data.maxPlayers &&
+        request.resource.data.joinedAt == request.time &&
+        request.resource.data.lastSeen == request.time &&
+        request.resource.data.isConnected == true &&
+        request.resource.data.gameState.keys().hasAll([
+          "rooms", "waitingRoom", "completedPatients", "totalRevenue", "totalCost",
+          "staffingCost", "staffingComplete", "currentPhase", "currentHour",
+          "hourComplete", "lastCompletedHour", "lastArrivalsHour",
+          "lastTreatmentHour", "lastSequencingHour", "stateVersion",
+          "lastReadyEpoch", "stats", "turnEvents"
+        ]) &&
+        request.resource.data.gameState.keys().hasOnly([
+          "rooms", "waitingRoom", "completedPatients", "totalRevenue", "totalCost",
+          "staffingCost", "staffingComplete", "currentPhase", "currentHour",
+          "hourComplete", "lastCompletedHour", "lastArrivalsHour",
+          "lastTreatmentHour", "lastSequencingHour", "stateVersion",
+          "lastReadyEpoch", "stats", "turnEvents"
+        ]) &&
+        request.resource.data.gameState.currentPhase == "arriving" &&
+        request.resource.data.gameState.currentHour == 0 &&
+        request.resource.data.gameState.hourComplete == false &&
+        request.resource.data.gameState.lastCompletedHour == 0 &&
+        request.resource.data.gameState.lastArrivalsHour == 0 &&
+        request.resource.data.gameState.lastTreatmentHour == 0 &&
+        request.resource.data.gameState.lastSequencingHour == 0 &&
+        request.resource.data.gameState.stateVersion == 0 &&
+        request.resource.data.gameState.lastReadyEpoch == -1;
+    }
+
+    function validPublicPlayerUpdate() {
+      return !isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(["gameState", "isConnected", "lastSeen"]) &&
+        request.resource.data.id == resource.data.id &&
+        request.resource.data.name == resource.data.name &&
+        request.resource.data.sessionId == resource.data.sessionId &&
+        request.resource.data.joinedAt == resource.data.joinedAt &&
+        request.resource.data.lastSeen == request.time;
+    }
+
+    function validRosterCreate(sessionId) {
+      return request.resource.data.keys().hasAll([
+          "playerId", "normalizedName", "createdAt"
+        ]) &&
+        request.resource.data.keys().hasOnly([
+          "playerId", "normalizedName", "createdAt"
+        ]) &&
+        sessionIsJoinable(sessionId) &&
+        request.resource.data.playerId is string &&
+        request.resource.data.normalizedName is string &&
+        request.resource.data.normalizedName.size() > 0 &&
+        request.resource.data.normalizedName.size() <= 80 &&
+        request.resource.data.createdAt == request.time;
+    }
+
     match /instructors/{userId} {
       allow read: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
-      allow create: if isSignedIn() && request.auth.uid == userId;
-      allow update, delete: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
+      allow create: if validInstructorCreate(userId);
+      allow update: if isAdmin() || validOwnInstructorUpdate(userId);
+      allow delete: if isAdmin();
     }
 
     match /sessions/{sessionId} {
-      // Anyone can read sessions (players need to look up by code)
+      // Public reads are still required for students to join by session code and
+      // continue the game without Firebase Auth.
       allow read: if true;
-      // Only authenticated instructors can write to sessions
-      allow create: if isSignedIn();
-      allow update: if isSignedIn() || (
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['players', 'playerCount', 'staffingReadyCount', 'turnReadyCount', 'syncEpoch', 'currentHour', 'status', 'pauseAfterTurn', 'endedAt'])
-      );
-      allow delete: if isSignedIn();
+      allow create: if isApprovedInstructor(request.auth.uid) &&
+        request.resource.data.instructorId == request.auth.uid &&
+        validSessionCreate();
+      allow update: if canManageSessionForInstructor(resource.data.instructorId) ||
+        validPublicJoinSessionUpdate(sessionId) ||
+        validPublicStaffingReadyIncrement() ||
+        validPublicStaffingAdvance() ||
+        validPublicTurnReadyIncrement() ||
+        validPublicTurnAdvance() ||
+        validPublicTurnPause() ||
+        validPublicTurnComplete();
+      allow delete: if canManageSessionForInstructor(resource.data.instructorId);
     }
 
     match /sessions/{sessionId}/roster/{lockId} {
-      // Lightweight roster locks for join deduplication
-      allow read, write: if true;
+      // Public read/create are required for anonymous students joining by code + name.
+      allow read: if sessionExists(sessionId);
+      allow create: if !exists(/databases/$(database)/documents/sessions/$(sessionId)/roster/$(lockId)) &&
+        validRosterCreate(sessionId);
+      allow update: if false;
+      allow delete: if canManageSession(sessionId);
     }
+
     match /players/{playerId} {
-      // Anyone can read players
+      // Public reads are still required for anonymous students reconnecting and
+      // receiving game state snapshots.
       allow read: if true;
-      // Anyone can create a player (joining a session)
-      allow create: if true;
-      // Anyone can update a player, but only allowed fields unless signed in
-      allow update: if isSignedIn() || (
-        request.resource.data.diff(resource.data).affectedKeys()
-          .hasOnly(['gameState', 'isConnected', 'lastSeen'])
-      );
-      // Only authenticated users (instructors) can delete players
-      allow delete: if isSignedIn();
+      allow create: if validPlayerCreate(playerId);
+      allow update: if canManagePlayer(resource.data.sessionId) || validPublicPlayerUpdate();
+      allow delete: if canManagePlayer(resource.data.sessionId);
     }
   }
 }
-
-

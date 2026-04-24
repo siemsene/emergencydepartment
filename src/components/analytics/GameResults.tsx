@@ -89,11 +89,12 @@ interface GameResultsProps {
 }
 
 export function GameResults({ sessionId: propSessionId, playerId }: GameResultsProps) {
-  const { sessionId: paramSessionId } = useParams<{ sessionId: string }>();
+  const { sessionId: paramSessionId, playerId: paramPlayerId } = useParams<{ sessionId: string; playerId?: string }>();
   const navigate = useNavigate();
   const resultsRef = useRef<HTMLDivElement>(null);
 
   const sessionId = propSessionId || paramSessionId;
+  const effectivePlayerId = playerId || paramPlayerId;
 
   const [session, setSession] = useState<Session | null>(null);
   const [results, setResults] = useState<PlayerResult[]>([]);
@@ -754,7 +755,7 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
     <div className={`game-results${isExporting ? ' exporting' : ''}`}>
       <header className="results-header">
         <div className="header-left">
-          {!playerId && (
+          {!effectivePlayerId && (
             <Button variant="secondary" size="small" onClick={() => navigate('/instructor/dashboard')}>
               &larr; Back
             </Button>
@@ -763,7 +764,7 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
           <span className="session-name">{session.name}</span>
         </div>
         <div className="header-actions">
-          {!playerId ? (
+          {!effectivePlayerId ? (
             <>
               <Button variant="secondary" onClick={handleDownloadExcel} loading={isExportingExcel}>
                 Download Excel
@@ -798,7 +799,7 @@ export function GameResults({ sessionId: propSessionId, playerId }: GameResultsP
             {results.map((result, index) => (
               <div
                 key={result.playerId}
-                className={`table-row ${playerId === result.playerId ? 'highlight' : ''} ${index < 3 ? `rank-${index + 1}` : ''}`}
+                className={`table-row ${effectivePlayerId === result.playerId ? 'highlight' : ''} ${index < 3 ? `rank-${index + 1}` : ''}`}
               >
                 <span className="player-name">
                   <span className="rank">{index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `${index + 1}.`}</span>

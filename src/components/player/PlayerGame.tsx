@@ -1,14 +1,10 @@
-import React, { Suspense, lazy, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useGame } from '../../contexts/GameContext';
 import { GameBoard } from '../game/GameBoard';
 import { getSession, getPlayer, updatePlayerConnection } from '../../services/firebaseService';
 import './PlayerGame.css';
-
-const GameResults = lazy(() =>
-  import('../analytics/GameResults').then((module) => ({ default: module.GameResults }))
-);
 
 export function PlayerGame() {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -85,6 +81,13 @@ export function PlayerGame() {
     }
   }, [isLoading, error, player, navigate]);
 
+  useEffect(() => {
+    if (!sessionId || !session || !player) return;
+    if (session.status === 'completed') {
+      window.location.replace(`/play/${sessionId}/results/${player.id}`);
+    }
+  }, [session?.status, sessionId, player?.id]);
+
   if (isLoading) {
     return (
       <div className="player-game-loading">
@@ -145,13 +148,8 @@ export function PlayerGame() {
     );
   }
 
-  // Show results if game is completed
   if (session.status === 'completed') {
-    return (
-      <Suspense fallback={<div className="player-game-loading">Loading results...</div>}>
-        <GameResults sessionId={session.id} playerId={player.id} />
-      </Suspense>
-    );
+    return <div className="player-game-loading">Loading results...</div>;
   }
 
   // Show game board

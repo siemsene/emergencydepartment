@@ -38,6 +38,7 @@ firebase-debug.log
 # Misc
 *.docx
 *.pdf
+security_best_practices_report.md
 
 # Local pregenerated arrivals example
 src/data/pregeneratedArrivals.example.ts

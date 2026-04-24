@@ -72,6 +72,7 @@ function AppRoutes() {
         {/* Player Routes */}
         <Route path="/" element={<JoinSession />} />
         <Route path="/play/:sessionId" element={<PlayerGame />} />
+        <Route path="/play/:sessionId/results/:playerId" element={<GameResults />} />
 
         {/* Instructor Routes */}
         <Route path="/instructor/login" element={<InstructorAuth />} />
