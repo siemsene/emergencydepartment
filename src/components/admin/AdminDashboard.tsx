@@ -37,7 +37,7 @@ export function AdminDashboard() {
     try {
       const data = await getAllInstructors();
       setInstructors(data);
-      await loadUsageStats(data.filter(i => i.approved));
+      await loadUsageStats(data.filter(i => i.approvalStatus !== 'pending'));
     } catch (err) {
       console.error('Error loading instructors:', err);
     } finally {
@@ -45,9 +45,9 @@ export function AdminDashboard() {
     }
   };
 
-  const loadUsageStats = async (approvedInstructors: Instructor[]) => {
+  const loadUsageStats = async (trackedInstructors: Instructor[]) => {
     const entries = await Promise.all(
-      approvedInstructors.map(async (instructor) => {
+      trackedInstructors.map(async (instructor) => {
         const sessions = await getInstructorSessions(instructor.id);
         const totalStudents = sessions.reduce((sum, s) => sum + s.players.length, 0);
         const completedPlayers = sessions
@@ -59,11 +59,27 @@ export function AdminDashboard() {
     setInstructorStats(new Map(entries));
   };
 
+  const updateInstructorStatus = (
+    instructorId: string,
+    approvalStatus: NonNullable<Instructor['approvalStatus']>
+  ) => {
+    setInstructors((current) =>
+      current.map((instructor) =>
+        instructor.id === instructorId ? {
+          ...instructor,
+          approved: approvalStatus === 'approved',
+          approvalStatus
+        } : instructor
+      )
+    );
+  };
+
   const handleApprove = async () => {
     if (!actionInstructorId || !user) return;
 
     try {
       await approveInstructor(actionInstructorId, user.uid);
+      updateInstructorStatus(actionInstructorId, 'approved');
       const instructor = instructors.find(i => i.id === actionInstructorId);
       if (instructor) {
         await notifyInstructorApproved(instructor.email, instructor.name);
@@ -82,6 +98,7 @@ export function AdminDashboard() {
 
     try {
       await removeInstructorAccess(actionInstructorId);
+      updateInstructorStatus(actionInstructorId, 'rejected');
       const instructor = instructors.find(i => i.id === actionInstructorId);
       if (instructor) {
         await notifyInstructorRejected(instructor.email, instructor.name);
@@ -100,8 +117,9 @@ export function AdminDashboard() {
     navigate('/instructor/login');
   };
 
-  const pendingInstructors = instructors.filter(i => !i.approved);
-  const approvedInstructors = instructors.filter(i => i.approved);
+  const pendingInstructors = instructors.filter(i => i.approvalStatus === 'pending');
+  const approvedInstructors = instructors.filter(i => i.approvalStatus === 'approved');
+  const inactiveInstructors = instructors.filter(i => i.approvalStatus === 'rejected');
 
   if (!isAdmin) {
     return null;
@@ -232,6 +250,61 @@ export function AdminDashboard() {
                         }}
                       >
                         Remove Access
+                      </Button>
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+        </section>
+
+        <section className="admin-section">
+          <h2>Inactive Instructors ({inactiveInstructors.length})</h2>
+          {inactiveInstructors.length === 0 ? (
+            <div className="empty-state">No inactive instructors</div>
+          ) : (
+            <div className="instructor-table">
+              <div className="table-header">
+                <span>Name</span>
+                <span>Email</span>
+                <span>Organization</span>
+                <span>Sessions</span>
+                <span>Total Students</span>
+                <span>Completed</span>
+                <span>Last Active</span>
+                <span>Actions</span>
+              </div>
+              <AnimatePresence>
+                {inactiveInstructors.map((instructor) => (
+                  <motion.div
+                    key={instructor.id}
+                    className="table-row"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                  >
+                    <span className="name">{instructor.name}</span>
+                    <span className="email">{instructor.email}</span>
+                    <span>{instructor.organization || '-'}</span>
+                    <span>{instructor.sessionsCreated}</span>
+                    <span>{instructorStats.get(instructor.id)?.totalStudents ?? '—'}</span>
+                    <span>{instructorStats.get(instructor.id)?.completedPlayers ?? '—'}</span>
+                    <span>
+                      {instructor.lastActive
+                        ? instructor.lastActive.toLocaleDateString()
+                        : 'Never'}
+                    </span>
+                    <div className="actions">
+                      <Button
+                        variant="success"
+                        size="small"
+                        onClick={() => {
+                          setActionInstructorId(instructor.id);
+                          setActionType('approve');
+                        }}
+                      >
+                        Restore Access
                       </Button>
                     </div>
                   </motion.div>

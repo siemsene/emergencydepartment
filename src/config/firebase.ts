@@ -1,7 +1,11 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
-import { initializeAppCheck, ReCaptchaEnterpriseProvider } from 'firebase/app-check';
+import {
+  initializeAppCheck,
+  ReCaptchaEnterpriseProvider,
+  ReCaptchaV3Provider
+} from 'firebase/app-check';
 
 // Firebase configuration - Replace with your own config
 const firebaseConfig = {
@@ -15,16 +19,24 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// App Check — use debug token in development, reCAPTCHA Enterprise in production
+// App Check — use a debug token in development and prefer reCAPTCHA v3 in production.
 if (import.meta.env.DEV) {
   // @ts-expect-error Firebase App Check debug token for local development
   self.FIREBASE_APPCHECK_DEBUG_TOKEN = import.meta.env.VITE_APPCHECK_DEBUG_TOKEN || true;
 }
 
-const recaptchaSiteKey = import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY;
-if (recaptchaSiteKey) {
+const recaptchaV3SiteKey = import.meta.env.VITE_RECAPTCHA_SITE_KEY;
+const recaptchaEnterpriseSiteKey = import.meta.env.VITE_RECAPTCHA_ENTERPRISE_SITE_KEY;
+
+const appCheckProvider = recaptchaV3SiteKey ?
+  new ReCaptchaV3Provider(recaptchaV3SiteKey) :
+  recaptchaEnterpriseSiteKey ?
+    new ReCaptchaEnterpriseProvider(recaptchaEnterpriseSiteKey) :
+    null;
+
+if (appCheckProvider) {
   initializeAppCheck(app, {
-    provider: new ReCaptchaEnterpriseProvider(recaptchaSiteKey),
+    provider: appCheckProvider,
     isTokenAutoRefreshEnabled: true
   });
 }

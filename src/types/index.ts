@@ -12,6 +12,7 @@ export interface User {
 export interface Instructor extends User {
   role: 'instructor';
   approved: boolean;
+  approvalStatus?: 'pending' | 'approved' | 'rejected';
   approvedAt?: Date;
   approvedBy?: string;
   organization?: string;

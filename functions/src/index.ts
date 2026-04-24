@@ -1,9 +1,11 @@
 import {setGlobalOptions} from "firebase-functions";
 import {onSchedule} from "firebase-functions/v2/scheduler";
 import {onCall, HttpsError} from "firebase-functions/v2/https";
+import {onMessagePublished} from "firebase-functions/v2/pubsub";
 import {defineSecret} from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import * as admin from "firebase-admin";
+import {CloudBillingClient} from "@google-cloud/billing";
 
 setGlobalOptions({maxInstances: 10});
 
@@ -171,7 +173,10 @@ interface SendEmailData {
 }
 
 export const sendEmail = onCall(
-  {secrets: [smtp2goApiKey, adminEmail, fromEmail]},
+  {
+    secrets: [smtp2goApiKey, adminEmail, fromEmail],
+    enforceAppCheck: true,
+  },
   async (request) => {
     const data = request.data as SendEmailData;
 
@@ -353,5 +358,83 @@ export const sendEmail = onCall(
       logger.error("Failed to send email:", error);
       return {success: false, reason: "send_error"};
     }
+  }
+);
+
+// ---- Billing Kill Switch ----
+// Listens to a Pub/Sub topic that the GCP budget posts to, and disables
+// billing on the project when actual spend exceeds the budget amount.
+// Attach a budget in Billing → Budgets & alerts to the topic name below.
+
+interface BudgetNotification {
+  budgetDisplayName: string;
+  costAmount: number;
+  costIntervalStart: string;
+  budgetAmount: number;
+  budgetAmountType: string;
+  currencyCode: string;
+}
+
+export const stopBillingOnBudgetExceeded = onMessagePublished(
+  {topic: "billing-alerts", region: "us-central1"},
+  async (event) => {
+    const payload = event.data.message.json as BudgetNotification | undefined;
+
+    if (!payload) {
+      logger.warn("Budget notification missing JSON payload");
+      return;
+    }
+
+    const {costAmount, budgetAmount, budgetDisplayName} = payload;
+
+    if (typeof costAmount !== "number" || typeof budgetAmount !== "number") {
+      logger.warn("Budget notification malformed", {payload});
+      return;
+    }
+
+    if (costAmount <= budgetAmount) {
+      logger.info("Budget alert received, under cap — no action.", {
+        budgetDisplayName,
+        costAmount,
+        budgetAmount,
+      });
+      return;
+    }
+
+    const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT;
+    if (!projectId) {
+      logger.error("Cannot determine project ID; aborting kill switch.");
+      return;
+    }
+
+    const projectName = `projects/${projectId}`;
+    const billing = new CloudBillingClient();
+
+    const [billingInfo] = await billing.getProjectBillingInfo({
+      name: projectName,
+    });
+
+    if (!billingInfo.billingEnabled) {
+      logger.info("Billing already disabled on project; no action.", {
+        projectId,
+      });
+      return;
+    }
+
+    logger.error("BUDGET EXCEEDED — DISABLING BILLING ON PROJECT", {
+      projectId,
+      budgetDisplayName,
+      costAmount,
+      budgetAmount,
+    });
+
+    await billing.updateProjectBillingInfo({
+      name: projectName,
+      projectBillingInfo: {billingAccountName: ""},
+    });
+
+    logger.error("Billing disabled. Project will stop serving traffic.", {
+      projectId,
+    });
   }
 );

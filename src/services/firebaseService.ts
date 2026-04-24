@@ -2,7 +2,9 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
+  getDocsFromServer,
   setDoc,
   updateDoc,
   deleteDoc,
@@ -141,6 +143,19 @@ function mapPlayerFromSnapshot(id: string, data: Record<string, any>): Player {
   } as Player;
 }
 
+function mapInstructorFromSnapshot(id: string, data: Record<string, any>): Instructor {
+  const approvalStatus = data.approvalStatus ?? (data.approved ? 'approved' : 'pending');
+
+  return {
+    id,
+    ...data,
+    approvalStatus,
+    createdAt: data.createdAt?.toDate() || new Date(),
+    approvedAt: data.approvedAt?.toDate(),
+    lastActive: data.lastActive?.toDate()
+  } as Instructor;
+}
+
 async function deleteRefsInBatches(refs: DocumentReference[]): Promise<void> {
   let batch = writeBatch(db);
   let pending = 0;
@@ -180,6 +195,7 @@ export async function registerInstructor(
     name,
     role: 'instructor',
     approved: false,
+    approvalStatus: 'pending',
     organization,
     sessionsCreated: 0,
     createdAt: new Date()
@@ -211,37 +227,34 @@ export async function resetPassword(email: string) {
 // Instructor Functions
 export async function getInstructor(userId: string): Promise<Instructor | null> {
   const docRef = doc(db, 'instructors', userId);
-  const docSnap = await getDoc(docRef);
+  let docSnap;
+  try {
+    docSnap = await getDocFromServer(docRef);
+  } catch {
+    docSnap = await getDoc(docRef);
+  }
   if (docSnap.exists()) {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      ...data,
-      createdAt: data.createdAt?.toDate() || new Date(),
-      approvedAt: data.approvedAt?.toDate(),
-      lastActive: data.lastActive?.toDate()
-    } as Instructor;
+    return mapInstructorFromSnapshot(docSnap.id, docSnap.data());
   }
   return null;
 }
 
 export async function getAllInstructors(): Promise<Instructor[]> {
-  const querySnapshot = await getDocs(collection(db, 'instructors'));
-  return querySnapshot.docs.map((docSnap) => {
-    const data = docSnap.data();
-    return {
-      id: docSnap.id,
-      ...data,
-      createdAt: data.createdAt?.toDate() || new Date(),
-      approvedAt: data.approvedAt?.toDate(),
-      lastActive: data.lastActive?.toDate()
-    } as Instructor;
-  });
+  let querySnapshot;
+  try {
+    querySnapshot = await getDocsFromServer(collection(db, 'instructors'));
+  } catch {
+    querySnapshot = await getDocs(collection(db, 'instructors'));
+  }
+  return querySnapshot.docs.map((docSnap) =>
+    mapInstructorFromSnapshot(docSnap.id, docSnap.data())
+  );
 }
 
 export async function approveInstructor(instructorId: string, adminId: string) {
   await updateDoc(doc(db, 'instructors', instructorId), {
     approved: true,
+    approvalStatus: 'approved',
     approvedAt: serverTimestamp(),
     approvedBy: adminId
   });
@@ -249,7 +262,8 @@ export async function approveInstructor(instructorId: string, adminId: string) {
 
 export async function removeInstructorAccess(instructorId: string) {
   await updateDoc(doc(db, 'instructors', instructorId), {
-    approved: false
+    approved: false,
+    approvalStatus: 'rejected'
   });
 }
 
@@ -905,6 +919,7 @@ export async function createAdminInstructor(
     name,
     role: 'instructor',
     approved: true, // Admin is auto-approved
+    approvalStatus: 'approved',
     sessionsCreated: 0,
     createdAt: new Date()
   };

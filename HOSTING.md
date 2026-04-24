@@ -112,23 +112,20 @@ cd functions && npm install && cd ..
 
 ---
 
-## 7. Set Up reCAPTCHA Enterprise (App Check)
+## 7. Set Up reCAPTCHA (App Check)
 
 App Check protects your Firebase resources from abuse. This step is optional for getting started but recommended for production.
 
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
-2. Select the same project you created in Firebase.
-3. Search for **reCAPTCHA Enterprise** in the search bar and enable the API.
-4. Go to **reCAPTCHA Enterprise > Keys** and click **Create Key**.
-5. Choose **Website** as the platform.
-6. Add your domain (e.g., `my-emergency-game.web.app`) and `localhost` for development.
-7. Click **Create** and copy the **Site Key**.
+1. Go to the [reCAPTCHA Admin Console](https://www.google.com/recaptcha/admin/create).
+2. Choose **reCAPTCHA v3**.
+3. Add your domain (e.g., `my-emergency-game.web.app`). For local development, use an App Check debug token instead of relying on `localhost`.
+4. Click **Submit** and copy the **Site Key** and **Secret Key**.
 
 Now enable App Check in Firebase:
 
 1. Go back to the Firebase Console > **Build > App Check**.
 2. Click on your web app.
-3. Select **reCAPTCHA Enterprise** and paste the Site Key.
+3. Select **reCAPTCHA** and paste the **Secret Key** from the reCAPTCHA Admin Console.
 4. Click **Save**.
 
 ---
@@ -151,8 +148,11 @@ VITE_FIREBASE_APP_ID=your_app_id_here
 # Admin - the email address you will use to log in as admin
 VITE_ADMIN_EMAIL=your-email@example.com
 
-# reCAPTCHA Enterprise - from Step 7 (leave blank to skip App Check)
-VITE_RECAPTCHA_ENTERPRISE_SITE_KEY=your_recaptcha_site_key_here
+# reCAPTCHA v3 - from Step 7 (leave blank to skip App Check)
+VITE_RECAPTCHA_SITE_KEY=your_recaptcha_site_key_here
+
+# Optional legacy fallback if you still use App Check with reCAPTCHA Enterprise
+# VITE_RECAPTCHA_ENTERPRISE_SITE_KEY=your_recaptcha_enterprise_site_key_here
 
 # Debug token for local development only (see Step 17)
 # VITE_APPCHECK_DEBUG_TOKEN=

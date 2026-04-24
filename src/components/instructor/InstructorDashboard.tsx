@@ -124,11 +124,18 @@ export function InstructorDashboard() {
   }
 
   if (!instructor.approved) {
+    const heading = instructor.approvalStatus === 'rejected' ?
+      'Account Access Removed' :
+      'Account Pending Approval';
+    const message = instructor.approvalStatus === 'rejected' ?
+      'Your instructor access has been removed. Contact the administrator if you believe this was a mistake.' :
+      'Your instructor account is awaiting admin approval. You\'ll receive an email once your account has been approved.';
+
     return (
       <div className="pending-approval-page">
         <div className="pending-card">
-          <h1>Account Pending Approval</h1>
-          <p>Your instructor account is awaiting admin approval. You'll receive an email once your account has been approved.</p>
+          <h1>{heading}</h1>
+          <p>{message}</p>
           <Button variant="secondary" onClick={handleLogout}>
             Sign Out
           </Button>
