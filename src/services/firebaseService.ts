@@ -28,7 +28,8 @@ import {
   onAuthStateChanged,
   User as FirebaseUser
 } from 'firebase/auth';
-import { db, auth } from '../config/firebase';
+import { getFunctions, httpsCallable } from 'firebase/functions';
+import app, { db, auth } from '../config/firebase';
 import {
   Instructor,
   Session,
@@ -43,6 +44,11 @@ import { DEFAULT_PARAMETERS } from '../data/gameConstants';
 import { notifyAdminNewInstructor } from './emailService';
 
 const DEFAULT_MAX_PLAYERS = 150;
+const functions = getFunctions(app);
+const joinSessionFn = httpsCallable<JoinSessionCallableRequest, JoinSessionCallableResponse>(
+  functions,
+  'joinSession'
+);
 
 type ReadyPhase = 'staffing' | 'turn';
 
@@ -51,6 +57,27 @@ interface ReadyAdvanceResult {
   stale?: boolean;
   status?: Session['status'];
   currentHour?: number;
+}
+
+interface JoinSessionCallableRequest {
+  sessionCode: string;
+  playerName: string;
+}
+
+interface JoinSessionCallablePlayer {
+  id: string;
+  name: string;
+  sessionId: string;
+  joinedAt: string;
+  isConnected: boolean;
+  lastSeen: string;
+  nudgedAt?: number;
+  gameState?: Partial<PlayerGameState>;
+}
+
+interface JoinSessionCallableResponse {
+  player: JoinSessionCallablePlayer;
+  reusedExistingPlayer: boolean;
 }
 
 function normalizePlayerName(name: string): string {
@@ -113,6 +140,15 @@ function mergePlayerGameState(raw: Partial<PlayerGameState> | undefined): Player
       }
     },
     lastReadyEpoch: incoming.lastReadyEpoch ?? -1
+  };
+}
+
+function mapPlayerFromCallable(player: JoinSessionCallablePlayer): Player {
+  return {
+    ...player,
+    joinedAt: new Date(player.joinedAt),
+    lastSeen: new Date(player.lastSeen),
+    gameState: mergePlayerGameState(player.gameState)
   };
 }
 
@@ -664,101 +700,29 @@ type JoinSessionResult = { player: Player; error?: undefined } | { player: null;
 export async function joinSession(sessionCode: string, playerName: string): Promise<JoinSessionResult> {
   const normalizedCode = sessionCode.toUpperCase();
   const cleanedName = playerName.trim().replace(/\s+/g, ' ');
-  const session = (await getSessionByCode(normalizedCode)) || (await getSession(sessionCode));
-  if (!session) return { player: null, error: 'SESSION_INVALID' };
+  try {
+    const result = await joinSessionFn({
+      sessionCode: normalizedCode,
+      playerName: cleanedName
+    });
 
-  const result = await runTransaction(db, async (transaction) => {
-    const sessionRef = doc(db, 'sessions', session.id);
-    const sessionSnap = await transaction.get(sessionRef);
-    if (!sessionSnap.exists()) return { kind: 'error' as const, error: 'SESSION_INVALID' as const };
-
-    const sessionData = sessionSnap.data();
-    const sessionStatus = sessionData.status;
-    const expiresAt = sessionData.expiresAt?.toDate?.() ?? new Date(0);
-    if (sessionStatus === 'completed' || new Date() > expiresAt) {
-      return { kind: 'error' as const, error: 'SESSION_INVALID' as const };
+    const data = result.data;
+    if (!data?.player) {
+      return { player: null, error: 'SESSION_INVALID' };
     }
 
-    const maxPlayers = Number(sessionData.maxPlayers ?? DEFAULT_MAX_PLAYERS);
-    const playerCount = Number(sessionData.playerCount ?? (Array.isArray(sessionData.players) ? sessionData.players.length : 0));
-
-    const rosterRef = doc(db, 'sessions', session.id, 'roster', getRosterLockId(cleanedName));
-    const rosterSnap = await transaction.get(rosterRef);
-
-    if (rosterSnap.exists()) {
-      const existingPlayerId = String(rosterSnap.data().playerId || '');
-      if (existingPlayerId) {
-        const existingPlayerRef = doc(db, 'players', existingPlayerId);
-        const existingPlayerSnap = await transaction.get(existingPlayerRef);
-
-        if (existingPlayerSnap.exists()) {
-          const existingPlayerData = existingPlayerSnap.data();
-          const existingPlayer = mapPlayerFromSnapshot(existingPlayerSnap.id, existingPlayerData);
-
-          if (sessionStatus === 'setup') {
-            return { kind: 'error' as const, error: 'NAME_TAKEN' as const };
-          }
-
-          transaction.update(existingPlayerRef, {
-            isConnected: true,
-            lastSeen: serverTimestamp()
-          });
-
-          return {
-            kind: 'reconnect' as const,
-            player: {
-              ...existingPlayer,
-              isConnected: true,
-              lastSeen: new Date()
-            }
-          };
-        }
-      }
-    }
-
-    if (playerCount >= maxPlayers) {
-      return { kind: 'error' as const, error: 'SESSION_INVALID' as const };
-    }
-
-    const playerId = doc(collection(db, 'players')).id;
-    const player: Player = {
-      id: playerId,
-      name: cleanedName,
-      sessionId: session.id,
-      joinedAt: new Date(),
-      isConnected: true,
-      lastSeen: new Date(),
-      gameState: initializePlayerGameState()
+    return {
+      player: mapPlayerFromCallable(data.player)
     };
+  } catch (error: any) {
+    const detailsCode = error?.details?.code;
+    if (typeof detailsCode === 'string') {
+      return { player: null, error: detailsCode };
+    }
 
-    transaction.set(doc(db, 'players', playerId), {
-      ...player,
-      joinedAt: serverTimestamp(),
-      lastSeen: serverTimestamp()
-    });
-
-    transaction.set(rosterRef, {
-      playerId,
-      normalizedName: normalizePlayerName(cleanedName),
-      createdAt: serverTimestamp()
-    });
-
-    transaction.update(sessionRef, {
-      playerCount: increment(1),
-      players: arrayUnion(playerId)
-    });
-
-    return { kind: 'new' as const, player };
-  });
-
-  if (result.kind === 'error') {
-    return { player: null, error: result.error };
+    console.error('joinSession callable failed:', error);
+    return { player: null, error: 'SESSION_INVALID' };
   }
-  if (result.kind === 'reconnect') {
-    return { player: result.player };
-  }
-
-  return { player: result.player };
 }
 
 export async function getPlayerByNameInSession(sessionId: string, name: string): Promise<Player | null> {

@@ -34,12 +34,6 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/sessions/$(sessionId));
     }
 
-    function sessionIsJoinable(sessionId) {
-      return sessionExists(sessionId) &&
-        sessionDoc(sessionId).data.status != "completed" &&
-        sessionDoc(sessionId).data.expiresAt > request.time;
-    }
-
     function canManageSessionForInstructor(instructorId) {
       return isAdmin() ||
         (isApprovedInstructor(request.auth.uid) && request.auth.uid == instructorId);
@@ -142,18 +136,6 @@ service cloud.firestore {
         request.resource.data.asyncMode == false;
     }
 
-    function validPublicJoinSessionUpdate(sessionId) {
-      return !isSignedIn() &&
-        sessionIsJoinable(sessionId) &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          "players", "playerCount"
-        ]) &&
-        request.resource.data.playerCount == resource.data.playerCount + 1 &&
-        request.resource.data.playerCount <= resource.data.maxPlayers &&
-        request.resource.data.players.size() == resource.data.players.size() + 1 &&
-        request.resource.data.players.size() <= resource.data.maxPlayers;
-    }
-
     function validPublicStaffingReadyIncrement() {
       return !isSignedIn() &&
         request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -226,49 +208,6 @@ service cloud.firestore {
         request.resource.data.endedAt == request.time;
     }
 
-    function validPlayerCreate(playerId) {
-      return request.resource.data.keys().hasAll([
-          "id", "name", "sessionId", "joinedAt", "isConnected", "lastSeen", "gameState"
-        ]) &&
-        request.resource.data.keys().hasOnly([
-          "id", "name", "sessionId", "joinedAt", "isConnected", "lastSeen", "gameState"
-        ]) &&
-        request.resource.data.id == playerId &&
-        request.resource.data.name is string &&
-        request.resource.data.name.size() > 0 &&
-        request.resource.data.name.size() <= 80 &&
-        request.resource.data.sessionId is string &&
-        sessionIsJoinable(request.resource.data.sessionId) &&
-        sessionDoc(request.resource.data.sessionId).data.playerCount <
-          sessionDoc(request.resource.data.sessionId).data.maxPlayers &&
-        request.resource.data.joinedAt == request.time &&
-        request.resource.data.lastSeen == request.time &&
-        request.resource.data.isConnected == true &&
-        request.resource.data.gameState.keys().hasAll([
-          "rooms", "waitingRoom", "completedPatients", "totalRevenue", "totalCost",
-          "staffingCost", "staffingComplete", "currentPhase", "currentHour",
-          "hourComplete", "lastCompletedHour", "lastArrivalsHour",
-          "lastTreatmentHour", "lastSequencingHour", "stateVersion",
-          "lastReadyEpoch", "stats", "turnEvents"
-        ]) &&
-        request.resource.data.gameState.keys().hasOnly([
-          "rooms", "waitingRoom", "completedPatients", "totalRevenue", "totalCost",
-          "staffingCost", "staffingComplete", "currentPhase", "currentHour",
-          "hourComplete", "lastCompletedHour", "lastArrivalsHour",
-          "lastTreatmentHour", "lastSequencingHour", "stateVersion",
-          "lastReadyEpoch", "stats", "turnEvents"
-        ]) &&
-        request.resource.data.gameState.currentPhase == "arriving" &&
-        request.resource.data.gameState.currentHour == 0 &&
-        request.resource.data.gameState.hourComplete == false &&
-        request.resource.data.gameState.lastCompletedHour == 0 &&
-        request.resource.data.gameState.lastArrivalsHour == 0 &&
-        request.resource.data.gameState.lastTreatmentHour == 0 &&
-        request.resource.data.gameState.lastSequencingHour == 0 &&
-        request.resource.data.gameState.stateVersion == 0 &&
-        request.resource.data.gameState.lastReadyEpoch == -1;
-    }
-
     function validPublicPlayerUpdate() {
       return !isSignedIn() &&
         request.resource.data.diff(resource.data).affectedKeys()
@@ -278,21 +217,6 @@ service cloud.firestore {
         request.resource.data.sessionId == resource.data.sessionId &&
         request.resource.data.joinedAt == resource.data.joinedAt &&
         request.resource.data.lastSeen == request.time;
-    }
-
-    function validRosterCreate(sessionId) {
-      return request.resource.data.keys().hasAll([
-          "playerId", "normalizedName", "createdAt"
-        ]) &&
-        request.resource.data.keys().hasOnly([
-          "playerId", "normalizedName", "createdAt"
-        ]) &&
-        sessionIsJoinable(sessionId) &&
-        request.resource.data.playerId is string &&
-        request.resource.data.normalizedName is string &&
-        request.resource.data.normalizedName.size() > 0 &&
-        request.resource.data.normalizedName.size() <= 80 &&
-        request.resource.data.createdAt == request.time;
     }
 
     match /instructors/{userId} {
@@ -310,7 +234,6 @@ service cloud.firestore {
         request.resource.data.instructorId == request.auth.uid &&
         validSessionCreate();
       allow update: if canManageSessionForInstructor(resource.data.instructorId) ||
-        validPublicJoinSessionUpdate(sessionId) ||
         validPublicStaffingReadyIncrement() ||
         validPublicStaffingAdvance() ||
         validPublicTurnReadyIncrement() ||
@@ -321,10 +244,8 @@ service cloud.firestore {
     }
 
     match /sessions/{sessionId}/roster/{lockId} {
-      // Public read/create are required for anonymous students joining by code + name.
-      allow read: if sessionExists(sessionId);
-      allow create: if !exists(/databases/$(database)/documents/sessions/$(sessionId)/roster/$(lockId)) &&
-        validRosterCreate(sessionId);
+      allow read: if canManageSession(sessionId);
+      allow create: if false;
       allow update: if false;
       allow delete: if canManageSession(sessionId);
     }
@@ -333,7 +254,7 @@ service cloud.firestore {
       // Public reads are still required for anonymous students reconnecting and
       // receiving game state snapshots.
       allow read: if true;
-      allow create: if validPlayerCreate(playerId);
+      allow create: if false;
       allow update: if canManagePlayer(resource.data.sessionId) || validPublicPlayerUpdate();
       allow delete: if canManagePlayer(resource.data.sessionId);
     }

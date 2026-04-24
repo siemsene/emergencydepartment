@@ -19,3 +19,12 @@ Original prompt: The request instructor account link should display right on the
 - Simplified the public player results view to show a lightweight summary + leaderboard without the heavier analytics charts/export controls.
 - Rolled those player-results changes back after they did not fix the issue and removed analytics from the player view.
 
+- Follow-up prompt: move anonymous student join behind a callable function.
+- Added a new `joinSession` callable in `functions/src/index.ts` with App Check enforcement, server-side validation, reconnect/name-lock handling, and transactional player/roster/session updates.
+- Replaced the browser-side Firestore write implementation of `joinSession(...)` in `src/services/firebaseService.ts` with an `httpsCallable` wrapper while preserving the existing return shape for the UI.
+- Validation: `functions/npm run build` passed and root `npm run build` passed.
+
+- Follow-up prompt: tighten Firestore rules now that join is server-side.
+- Removed the old anonymous join permissions from `firestore.rules` by blocking direct public session join counter updates, roster creates, and player creates.
+- Tightened roster reads so only the owning instructor/admin can read roster locks; anonymous gameplay reads/updates remain unchanged for now.
+

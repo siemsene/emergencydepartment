@@ -13,6 +13,9 @@ admin.initializeApp();
 
 const PLAYER_DELETE_BATCH_SIZE = 400;
 const ROSTER_DELETE_BATCH_SIZE = 400;
+const DEFAULT_MAX_PLAYERS = 150;
+const SESSION_CODE_LENGTH = 6;
+const MAX_PLAYER_NAME_LENGTH = 80;
 
 // Secrets
 const smtp2goApiKey = defineSecret("SMTP2GO_API_KEY");
@@ -171,6 +174,317 @@ interface SendEmailData {
   email?: string;
   resetLink?: string;
 }
+
+interface JoinSessionData {
+  sessionCode?: unknown;
+  playerName?: unknown;
+}
+
+interface CallablePlayer {
+  id: string;
+  name: string;
+  sessionId: string;
+  joinedAt: string;
+  isConnected: boolean;
+  lastSeen: string;
+  nudgedAt?: number;
+  gameState: Record<string, unknown>;
+}
+
+interface JoinSessionResponse {
+  player: CallablePlayer;
+  reusedExistingPlayer: boolean;
+}
+
+/**
+ * Normalizes a player name for comparisons.
+ * @param {string} name Player-provided name.
+ * @return {string} Normalized name.
+ */
+function normalizePlayerName(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/**
+ * Builds the roster document ID for a player name.
+ * @param {string} name Player-provided name.
+ * @return {string} Roster lock ID.
+ */
+function getRosterLockId(name: string): string {
+  const normalized = normalizePlayerName(name)
+    .replace(/[^a-z0-9_-]/g, "_")
+    .slice(0, MAX_PLAYER_NAME_LENGTH);
+
+  return normalized || "player";
+}
+
+/**
+ * Validates and normalizes join-session request data.
+ * @param {JoinSessionData} data Raw callable request data.
+ * @return {{sessionCode: string, playerName: string}} Normalized data.
+ */
+function parseJoinSessionData(
+  data: JoinSessionData
+): { sessionCode: string; playerName: string } {
+  if (typeof data.sessionCode !== "string" ||
+      typeof data.playerName !== "string") {
+    throw new HttpsError(
+      "invalid-argument",
+      "sessionCode and playerName are required",
+      {code: "INVALID_ARGUMENT"}
+    );
+  }
+
+  const sessionCode = data.sessionCode.trim().toUpperCase();
+  const playerName = data.playerName.trim().replace(/\s+/g, " ");
+
+  if (sessionCode.length < SESSION_CODE_LENGTH) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Session code must be at least 6 characters",
+      {code: "INVALID_ARGUMENT"}
+    );
+  }
+
+  if (!playerName || playerName.length > MAX_PLAYER_NAME_LENGTH) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Player name is invalid",
+      {code: "INVALID_ARGUMENT"}
+    );
+  }
+
+  return {sessionCode, playerName};
+}
+
+/**
+ * Returns the initial game state for a new player.
+ * @return {Record<string, unknown>} Default game state.
+ */
+function initializePlayerGameState(): Record<string, unknown> {
+  return {
+    rooms: [],
+    waitingRoom: [],
+    completedPatients: [],
+    totalRevenue: 0,
+    totalCost: 0,
+    staffingCost: 0,
+    staffingComplete: false,
+    currentPhase: "arriving",
+    currentHour: 0,
+    hourComplete: false,
+    lastCompletedHour: 0,
+    lastArrivalsHour: 0,
+    lastTreatmentHour: 0,
+    lastSequencingHour: 0,
+    stateVersion: 0,
+    lastReadyEpoch: -1,
+    stats: {
+      patientsTreated: {A: 0, B: 0, C: 0},
+      cardiacArrests: 0,
+      lwbs: {B: 0, C: 0},
+      turnedAway: {A: 0, B: 0, C: 0},
+      waitingCosts: 0,
+      riskEventCosts: 0,
+      hourlyUtilization: [],
+      hourlyQueueLength: [],
+      hourlyDemand: {A: [], B: [], C: []},
+      hourlyAvailableCapacity: {A: [], B: [], C: []},
+      maxWaitingTime: {A: 0, B: 0, C: 0},
+      mismatchTreatments: 0,
+      totalTreatments: 0,
+    },
+    turnEvents: {
+      arrived: {A: 0, B: 0, C: 0},
+      turnedAway: {A: 0, B: 0, C: 0},
+      riskEvents: [],
+      completed: [],
+      waitingCosts: 0,
+    },
+  };
+}
+
+/**
+ * Finds a session by public code, falling back to a direct document lookup.
+ * @param {admin.firestore.Firestore} db Firestore instance.
+ * @param {string} sessionCode Public session code or document ID.
+ * @return {Promise<admin.firestore.DocumentSnapshot | null>} Matching session.
+ */
+async function findSessionForJoin(
+  db: admin.firestore.Firestore,
+  sessionCode: string
+): Promise<admin.firestore.DocumentSnapshot | null> {
+  const codeSnapshot = await db
+    .collection("sessions")
+    .where("code", "==", sessionCode)
+    .limit(1)
+    .get();
+
+  if (!codeSnapshot.empty) {
+    return codeSnapshot.docs[0];
+  }
+
+  const sessionSnapshot = await db
+    .collection("sessions")
+    .doc(sessionCode)
+    .get();
+  return sessionSnapshot.exists ? sessionSnapshot : null;
+}
+
+/**
+ * Maps Firestore player data into a callable response payload.
+ * @param {string} playerId Firestore player doc ID.
+ * @param {admin.firestore.DocumentData} data Raw player data.
+ * @return {CallablePlayer} Serializable player payload.
+ */
+function mapCallablePlayer(
+  playerId: string,
+  data: admin.firestore.DocumentData
+): CallablePlayer {
+  const joinedAt = data.joinedAt?.toDate?.() ?? new Date();
+  const lastSeen = data.lastSeen?.toDate?.() ?? new Date();
+
+  return {
+    id: playerId,
+    name: String(data.name || ""),
+    sessionId: String(data.sessionId || ""),
+    joinedAt: joinedAt.toISOString(),
+    isConnected: Boolean(data.isConnected),
+    lastSeen: lastSeen.toISOString(),
+    nudgedAt: typeof data.nudgedAt === "number" ? data.nudgedAt : undefined,
+    gameState: (data.gameState as Record<string, unknown>) ??
+      initializePlayerGameState(),
+  };
+}
+
+export const joinSession = onCall(
+  {
+    enforceAppCheck: true,
+  },
+  async (request): Promise<JoinSessionResponse> => {
+    const {sessionCode, playerName} =
+      parseJoinSessionData((request.data ?? {}) as JoinSessionData);
+
+    const db = admin.firestore();
+    const initialSession = await findSessionForJoin(db, sessionCode);
+
+    if (!initialSession) {
+      throw new HttpsError(
+        "failed-precondition",
+        "Invalid session code or session has expired",
+        {code: "SESSION_INVALID"}
+      );
+    }
+
+    return db.runTransaction(async (transaction) => {
+      const sessionSnap = await transaction.get(initialSession.ref);
+
+      if (!sessionSnap.exists) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Invalid session code or session has expired",
+          {code: "SESSION_INVALID"}
+        );
+      }
+
+      const sessionData = sessionSnap.data() || {};
+      const sessionStatus = String(sessionData.status || "");
+      const expiresAt = sessionData.expiresAt?.toDate?.() ?? new Date(0);
+
+      if (sessionStatus === "completed" || new Date() > expiresAt) {
+        throw new HttpsError(
+          "failed-precondition",
+          "Invalid session code or session has expired",
+          {code: "SESSION_INVALID"}
+        );
+      }
+
+      const maxPlayers = Number(sessionData.maxPlayers ?? DEFAULT_MAX_PLAYERS);
+      const playerCount = Number(
+        sessionData.playerCount ??
+        (Array.isArray(sessionData.players) ? sessionData.players.length : 0)
+      );
+
+      const rosterRef = sessionSnap.ref
+        .collection("roster")
+        .doc(getRosterLockId(playerName));
+      const rosterSnap = await transaction.get(rosterRef);
+
+      if (rosterSnap.exists) {
+        const existingPlayerId = String(rosterSnap.data()?.playerId || "");
+        if (existingPlayerId) {
+          const existingPlayerRef = db
+            .collection("players")
+            .doc(existingPlayerId);
+          const existingPlayerSnap = await transaction.get(existingPlayerRef);
+
+          if (existingPlayerSnap.exists) {
+            if (sessionStatus === "setup") {
+              throw new HttpsError(
+                "already-exists",
+                "That name is already taken in this session",
+                {code: "NAME_TAKEN"}
+              );
+            }
+
+            transaction.update(existingPlayerRef, {
+              isConnected: true,
+              lastSeen: admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            return {
+              player: mapCallablePlayer(existingPlayerSnap.id, {
+                ...existingPlayerSnap.data(),
+                isConnected: true,
+                lastSeen: admin.firestore.Timestamp.now(),
+              }),
+              reusedExistingPlayer: true,
+            };
+          }
+        }
+      }
+
+      if (playerCount >= maxPlayers) {
+        throw new HttpsError(
+          "resource-exhausted",
+          "Session is full",
+          {code: "SESSION_FULL"}
+        );
+      }
+
+      const playerRef = db.collection("players").doc();
+      const playerWriteData = {
+        id: playerRef.id,
+        name: playerName,
+        sessionId: sessionSnap.id,
+        joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+        isConnected: true,
+        lastSeen: admin.firestore.FieldValue.serverTimestamp(),
+        gameState: initializePlayerGameState(),
+      };
+
+      transaction.set(playerRef, playerWriteData);
+      transaction.set(rosterRef, {
+        playerId: playerRef.id,
+        normalizedName: normalizePlayerName(playerName),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      transaction.update(sessionSnap.ref, {
+        playerCount: admin.firestore.FieldValue.increment(1),
+        players: admin.firestore.FieldValue.arrayUnion(playerRef.id),
+      });
+
+      return {
+        player: mapCallablePlayer(playerRef.id, {
+          ...playerWriteData,
+          joinedAt: admin.firestore.Timestamp.now(),
+          lastSeen: admin.firestore.Timestamp.now(),
+        }),
+        reusedExistingPlayer: false,
+      };
+    });
+  }
+);
 
 export const sendEmail = onCall(
   {
